@@ -1,0 +1,7 @@
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0
+mypy>=0.900
+yt-dlp>=2023.12.30
+ffmpeg-python>=0.2.0
+win10toast>=0.9; platform_system == "Windows" 
