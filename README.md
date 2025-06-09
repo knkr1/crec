@@ -1,4 +1,4 @@
-# crec
+# 🐊 crec
 
 Your Swiss Army knife for downloading media from the internet. Just paste a URL and watch the magic happen!
 
