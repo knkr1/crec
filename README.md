@@ -1,15 +1,15 @@
 # 🎥 crec - The Ultimate Media Downloader
 
-> One command to download any media. Downloads and copies the path to clipboard automatically! 🚀
+> One command to download any media. Downloads and copies the file to clipboard automatically! 🚀
 
 ## ✨ Features
 
-- **One Command Magic**: Just paste the URL and get the file path in your clipboard! ✨
+- **One Command Magic**: Just paste the URL and get the file in your clipboard! ✨
 - **Smart Organization**: Files automatically sorted into videos, audio, photos folders 📁
 - **Cross-Platform**: Works on Windows, macOS, and Linux 💫
 - **Quality Control**: Choose your preferred quality or get the best available 🎯
 
-### 🎮 Basic Usage
+## 🚀 Quick Start
 
 ```bash
 # Install
@@ -25,7 +25,7 @@ crec -a "https://youtube.com/..."
 crec -q 720 "https://youtube.com/..."
 ```
 
-## 🛠️ Advanced Usage
+## 🛠️ Usage
 
 ```bash
 # List available qualities
@@ -54,12 +54,9 @@ crec -op
 - TikTok 📱
 - Instagram 📸
 
-## 💡 Pro Tips
+## 📝 About
 
-1. Use `-ql` to check available qualities
-2. Combine `-t` with `-n` for organized thumbnails
-3. Use `-op` to quickly access your downloads
-4. Custom FFmpeg args for pro-level compression: `--ffmpeg-args "-c:v libx264 -crf 23"`
+Built on top of [yt-dlp](https://github.com/yt-dlp/yt-dlp) for reliable downloads and enhanced with automatic file copying and organization features.
 
 ---
 
