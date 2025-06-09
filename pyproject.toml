@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crec"
-version = "0.1.0"
+version = "0.1.2"
 description = "The Ultimate Media Downloader - Download videos, audio, and images from various platforms"
 readme = "README.md"
 requires-python = ">=3.7"
@@ -15,7 +15,6 @@ authors = [
 dependencies = [
     "yt-dlp>=2023.12.30",
     "ffmpeg-python>=0.2.0",
-    "win10toast>=0.9; platform_system == 'Windows'",
     "tqdm>=4.65.0"
 ]
 

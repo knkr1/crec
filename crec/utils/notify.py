@@ -18,21 +18,21 @@ class Notifier:
 
     @staticmethod
     def _notify_windows(title: str, message: str) -> None:
-        """Send notification on Windows."""
+        """Send notification on Windows using PowerShell."""
+        ps_script = f'''
+        Add-Type -AssemblyName System.Windows.Forms
+        $notify = New-Object System.Windows.Forms.NotifyIcon
+        $notify.Icon = [System.Drawing.SystemIcons]::Information
+        $notify.Visible = $true
+        $notify.ShowBalloonTip(0, "{title}", "{message}", [System.Windows.Forms.ToolTipIcon]::None)
+        Start-Sleep -Seconds 5
+        $notify.Dispose()
+        '''
         try:
-            from win10toast import ToastNotifier
-            toaster = ToastNotifier()
-            toaster.show_toast(title, message, duration=5)
-        except ImportError:
-            # Fallback to PowerShell
-            ps_script = f'''
-            Add-Type -AssemblyName System.Windows.Forms
-            $notify = New-Object System.Windows.Forms.NotifyIcon
-            $notify.Icon = [System.Drawing.SystemIcons]::Information
-            $notify.Visible = $true
-            $notify.ShowBalloonTip(0, "{title}", "{message}", [System.Windows.Forms.ToolTipIcon]::None)
-            '''
             subprocess.run(['powershell', '-Command', ps_script], capture_output=True)
+        except Exception:
+            # Fallback to simple print
+            print(f"\n{title}: {message}")
 
     @staticmethod
     def _notify_macos(title: str, message: str) -> None:
@@ -44,7 +44,7 @@ class Notifier:
                 f'display notification "{message}" with title "{title}"'
             ], capture_output=True)
         except Exception:
-            pass
+            print(f"\n{title}: {message}")
 
     @staticmethod
     def _notify_linux(title: str, message: str) -> None:
@@ -57,4 +57,4 @@ class Notifier:
                 # Fallback to zenity
                 subprocess.run(['zenity', '--info', f'--title={title}', f'--text={message}'], capture_output=True)
             except FileNotFoundError:
-                pass 
+                print(f"\n{title}: {message}") 

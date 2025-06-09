@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from ..utils.progress import ProgressHandler
 from ..utils.quality import QualityHandler
 from ..utils.notify import Notifier
-from ..utils.file_handler import FileHandler
+from ..utils.file_handler import FileHandler, copy_to_clipboard_async
 
 def copy_file_to_clipboard(filepath):
     """Copy file path to clipboard (cross-platform)"""
@@ -35,6 +35,10 @@ class YouTubeHandler:
             'quiet': True,
             'no_warnings': True,
             'progress_hooks': [self._progress_hook],
+            'nocheckcertificate': True,
+            'ignoreerrors': True,
+            'no_color': True,
+            'extract_flat': False,
         }
         self.current_progress = 0
 
@@ -96,6 +100,8 @@ class YouTubeHandler:
                 'skip_download': True,
                 'writethumbnail': True,
                 'outtmpl': output_path.replace('.jpg', ''),
+                'nocheckcertificate': True,
+                'ignoreerrors': True,
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -110,7 +116,12 @@ class YouTubeHandler:
     def _get_video_info(self, url: str) -> Optional[Dict]:
         """Get video information."""
         try:
-            with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
+            with yt_dlp.YoutubeDL({
+                'quiet': True, 
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'ignoreerrors': True,
+            }) as ydl:
                 return ydl.extract_info(url, download=False)
         except:
             return None
@@ -174,17 +185,26 @@ class YouTubeHandler:
 
             # Update options
             if audio_only:
-                self.ydl_opts['format'] = 'bestaudio/best'
-                self.ydl_opts['postprocessors'] = [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }]
+                self.ydl_opts.update({
+                    'format': 'bestaudio/best',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                    'postprocessor_args': [
+                        '-vn',  # No video
+                        '-acodec', 'libmp3lame',  # Use MP3 codec
+                        '-q:a', '2',  # High quality audio
+                    ],
+                })
                 # For audio, we need to specify the output template without extension
                 output_path = final_output_path.replace('.mp3', '')
             else:
-                self.ydl_opts['format'] = format_id if format_id else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-                self.ydl_opts['postprocessors'] = []
+                self.ydl_opts.update({
+                    'format': format_id if format_id else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                    'postprocessors': [],
+                })
                 output_path = final_output_path
 
             # Add custom FFmpeg arguments if provided
@@ -217,8 +237,8 @@ class YouTubeHandler:
             # Move file to correct directory based on extension
             final_output_path = FileHandler.move_to_correct_directory(final_output_path)
 
-            # Copy path to clipboard
-            copy_file_to_clipboard(final_output_path)
+            # Copy path to clipboard in background
+            copy_to_clipboard_async(final_output_path)
             return final_output_path
 
         except Exception as e:
