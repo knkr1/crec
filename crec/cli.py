@@ -2,13 +2,13 @@ import os
 import shutil
 import sys
 import argparse
-from .sources.youtube import YouTubeHandler
-from .sources.twitter import TwitterHandler
-from .sources.tiktok import TikTokHandler
-from .sources.instagram import InstagramHandler
-from .utils.quality import QualityHandler
-from .utils.notify import Notifier
-from .utils.file_handler import FileHandler
+from crec.sources.youtube import YouTubeHandler
+from crec.sources.twitter import TwitterHandler
+from crec.sources.tiktok import TikTokHandler
+from crec.sources.instagram import InstagramHandler
+from crec.utils.quality import QualityHandler
+from crec.utils.notify import Notifier
+from crec.utils.file_handler import FileHandler
 
 def cleanup_ezds():
     """Delete all contents in the crec directory."""
