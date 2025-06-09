@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="crec",
-    version="1.0.1",
+    version="1.0.2",
     author="knkr1",
     author_email="kaan@karesi.dev",
     description="The Ultimate Media Downloader - Download videos, audio, and images from various platforms",
@@ -38,7 +38,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "crec=crec.cli:main",
+            "crec=crec.main:main",
         ],
     },
 ) 

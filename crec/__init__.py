@@ -1,9 +1,5 @@
 """
-crec - The Ultimate Media Downloader
+crec - A simple command-line tool to download videos from various platforms
 """
 
-__version__ = "0.1.0"
-
-from crec.cli import main
-
-__all__ = ['main'] 
+__version__ = "1.0.2" 
