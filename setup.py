@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="crec",
-    version="0.1.0",
+    version="0.1.1",
     author="knkr1",
     author_email="kaan@karesi.dev",
     description="The Ultimate Media Downloader - Download videos, audio, and images from various platforms",
