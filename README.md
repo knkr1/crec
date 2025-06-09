@@ -1,24 +1,31 @@
 # crec
 
-A simple command-line tool to download videos from various platforms.
+Your Swiss Army knife for downloading media from the internet. Just paste a URL and watch the magic happen!
 
 ## Features
 
-- Download videos from multiple platforms:
+- **Universal Downloader**: Download from multiple platforms:
   - YouTube
   - Twitter
   - Instagram
   - TikTok
-  - And many more (experimental support for all other yt-dlp supported sites)
-- Download audio only
-- Download without audio
-- Download thumbnails
-- Compress videos
-- Copy file path to clipboard
-- List available qualities
-- Custom filename patterns
-- Playlist support
-- Custom FFmpeg arguments
+  - And many more! (experimental support for all [yt-dlp supported sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md))
+- **Flexible Output Options**:
+  - Audio-only downloads
+  - Quality selection
+  - Video compression
+  - Custom output directories
+  - Custom filename patterns
+  - Thumbnail downloads
+  - Playlist support
+- **Advanced Features**:
+  - Custom FFmpeg arguments
+  - Progress tracking
+  - Automatic file organization
+  - Clipboard integration
+- **Utility Commands**:
+  - Open download directory
+  - Clean up downloaded files
 
 ## Installation
 
@@ -28,103 +35,94 @@ pip install crec
 
 ## Usage
 
+It's stupidly simple. Just paste a URL and add any options you want:
+
 ```bash
-crec <url> [options]
+# Basic usage (just paste a URL)
+crec https://youtube.com/watch?v=dQw4w9WgXcQ
+
+# Want audio only? Add -a
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -a
+
+# Want 720p? Add -q 720
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -q 720
+
+# Want to compress it? Add -co 5
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -co 5
 ```
 
-### Options
-
-- `-a, --audio-only`: Download audio only (same as -nvi)
-- `-na, --no-audio`: Download without audio
-- `-nvi, --no-video`: Download only audio
-- `-nc, --no-copy`: Do not copy path to clipboard
-- `-vi, --video`: Download video (default behavior)
-- `-q, --quality`: Video quality (e.g., 720, 1080)
-- `-ql, --quality-list`: List available qualities and their sizes
-- `-co, --compress`: Compression level (0-9)
-- `-o, --output-dir`: Output directory
-- `-t, --thumbnail`: Download thumbnail
-- `-f, --filename`: Custom filename pattern (e.g., "{title}\_{quality}")
-- `-p, --playlist`: Download as playlist
-- `-ff, --ffmpeg-args`: Custom FFmpeg arguments
-- `-v, --version`: Show version information
-- `-d, --delete`: Delete all contents in ~/crec
-- `-op, --open`: Open ~/crec in file explorer
-
-### Examples
+### All Options
 
 ```bash
-# Download a video
-crec https://youtube.com/watch?v=...
+# Video/Audio Options
+-a, --audio-only      Download audio only
+-na, --no-audio       Download without audio
+-nvi, --no-video      Download only audio (same as -a)
+-vi, --video          Download video (default behavior)
 
-# Download audio only
-crec https://youtube.com/watch?v=... -a
+# Quality & Processing
+-q, --quality         Video quality (e.g., 720, 1080)
+-ql --quality-list    List video quailities
+-co, --compress       Compression level (0-9)
+-ff, --ffmpeg-args    Custom FFmpeg arguments
 
-# Download without audio
-crec https://youtube.com/watch?v=... -na
+# Output Options
+-o, --output-dir      Output directory
+-t, --thumbnail       Download thumbnail
+-f, --filename        Custom filename pattern
+-p, --playlist        Download as playlist
 
-# Download specific quality
-crec https://youtube.com/watch?v=... -q 720
+# Utility Commands
+-d, --delete          Delete all contents in ~/crec
+-op, --open           Open ~/crec in file explorer
+-v, --version         Show version information
+-nc --no-copy         Will not copy the file to the clipboard
+```
 
-# List available qualities
-crec https://youtube.com/watch?v=... -ql
+## Examples
 
-# Compress video
-crec https://youtube.com/watch?v=... -co 5
+```bash
+# Download a video (it's that simple!)
+crec https://youtube.com/watch?v=dQw4w9WgXcQ
 
-# Download thumbnail
-crec https://youtube.com/watch?v=... -t
+# Get just the audio
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -a
+
+# Get 720p quality
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -q 720
+
+# Compress it a bit
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -co 5
+
+# Save to a specific folder
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -o ~/Downloads
 
 # Custom filename
-crec https://youtube.com/watch?v=... -f "{title}_{quality}"
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -f "{title}_{quality}"
 
-# Download playlist
-crec https://youtube.com/playlist?list=... -p
+# Download without audio
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -na
 
-# Custom FFmpeg arguments
-crec https://youtube.com/watch?v=... -ff "-c:v libx264 -crf 23"
+# Download and delete original after compression
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -co 5 -no
 
-# Delete all contents in ~/crec
-crec -d
+# Don't copy path to clipboard
+crec https://youtube.com/watch?v=dQw4w9WgXcQ -nc
 
-# Open ~/crec in file explorer
+# Open download directory
 crec -op
+
+# Clean up downloaded files
+crec -d
 ```
 
-## Filename Patterns
+## Why crec?
 
-You can use the following placeholders in your filename pattern:
-
-- `{title}`: Video title
-- `{id}`: Video ID
-- `{quality}`: Video quality
-- `{date}`: Upload date
-
-Example: `-f "{title}_{quality}"` will create a file like `My Video_720.mp4`
-
-## Compression Levels
-
-- `0`: No compression
-- `1`: Light compression (high quality)
-- `2-3`: Medium compression
-- `4-5`: Moderate compression
-- `6-7`: Heavy compression
-- `8-9`: Extreme compression (low quality)
-
-## Output Directories
-
-By default, files are saved in:
-
-- `~/crec/videos/` for videos
-- `~/crec/audio/` for audio files
-- `~/crec/photos/` for thumbnails
-
-You can change the output directory with `-o`.
-
-## Requirements
-
-- Python 3.7+
-- FFmpeg (for audio extraction and compression)
+- **Versatility**: Download from virtually any platform
+- **Simplicity**: One command to rule them all
+- **Power**: Advanced features when you need them
+- **Reliability**: Built on yt-dlp
+- **Flexibility**: Customize every aspect of your downloads
 
 ## License
 
