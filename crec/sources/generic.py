@@ -7,19 +7,7 @@ from ..utils.quality import QualityHandler
 from ..utils.notify import Notifier
 from ..utils.file_handler import FileHandler, copy_to_clipboard_async
 
-def copy_file_to_clipboard(filepath):
-    """Copy file path to clipboard (cross-platform)"""
-    abs_path = os.path.abspath(filepath)
-    
-    if sys.platform == "win32":
-        path = abs_path.replace('\\', '\\\\')
-        os.system(f'powershell Set-Clipboard -Path "{path}"')
-    elif sys.platform == "darwin":
-        os.system(f"echo '{abs_path}' | pbcopy")
-    else:
-        os.system(f"echo '{abs_path}' | xclip -selection clipboard")
-
-class TikTokHandler:
+class GenericHandler:
     def __init__(self):
         self.download_dir = os.path.expanduser('~/crec/videos')
         self.audio_dir = os.path.expanduser('~/crec/audio')
@@ -42,8 +30,8 @@ class TikTokHandler:
         self.current_progress = 0
 
     def can_handle(self, url: str) -> bool:
-        """Check if the URL is a valid TikTok URL."""
-        return 'tiktok.com' in url
+        """Check if the URL is a valid video URL."""
+        return True  # Generic handler accepts any URL
 
     def _get_next_filename(self, audio_only: bool = False, output_dir: Optional[str] = None, 
                           filename_pattern: Optional[str] = None, video_info: Optional[Dict] = None) -> str:
@@ -105,7 +93,7 @@ class TikTokHandler:
                 download_thumbnail: bool = False, filename_pattern: Optional[str] = None,
                 is_playlist: bool = False, ffmpeg_args: Optional[str] = None,
                 no_audio: bool = False, no_original: bool = False, copy_to_clipboard: bool = True) -> Optional[str]:
-        """Download a TikTok video."""
+        """Download a video from any supported source."""
         try:
             # Reset progress
             self.current_progress = 0

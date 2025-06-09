@@ -1,26 +1,28 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "crec"
-version = "0.1.2"
-description = "The Ultimate Media Downloader - Download videos, audio, and images from various platforms"
+version = "1.0.0"
+description = "A command-line tool for downloading videos from various platforms"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "knkr1", email = "kaan@karesi.dev"}
+    {name = "Your Name", email = "your.email@example.com"}
 ]
 dependencies = [
-    "yt-dlp>=2023.12.30",
-    "ffmpeg-python>=0.2.0",
-    "tqdm>=4.65.0"
+    "yt-dlp",
+    "ffmpeg-python",
 ]
+
+[project.scripts]
+crec = "crec.main:main"
+
+[tool.setuptools]
+packages = ["crec"]
 
 [project.urls]
 Homepage = "https://github.com/knkr1/crec"
-Repository = "https://github.com/knkr1/crec.git"
-
-[project.scripts]
-crec = "crec.cli:main" 
+Repository = "https://github.com/knkr1/crec.git" 

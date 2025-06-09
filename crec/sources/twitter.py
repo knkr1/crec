@@ -103,7 +103,8 @@ class TwitterHandler:
     def download(self, url: str, audio_only: bool = False, quality: Optional[str] = None, 
                 compress_level: int = 0, output_dir: Optional[str] = None, 
                 download_thumbnail: bool = False, filename_pattern: Optional[str] = None,
-                is_playlist: bool = False, ffmpeg_args: Optional[str] = None) -> Optional[str]:
+                is_playlist: bool = False, ffmpeg_args: Optional[str] = None,
+                no_audio: bool = False, no_original: bool = False, copy_to_clipboard: bool = True) -> Optional[str]:
         """Download a Twitter video."""
         try:
             # Reset progress
@@ -135,7 +136,7 @@ class TwitterHandler:
                 audio_only, output_dir, filename_pattern, video_info
             )
 
-            # Update options
+            # Update options based on special flags
             if audio_only:
                 self.ydl_opts.update({
                     'format': 'bestaudio/best',
@@ -153,10 +154,18 @@ class TwitterHandler:
                 # For audio, we need to specify the output template without extension
                 output_path = final_output_path.replace('.mp3', '')
             else:
-                self.ydl_opts.update({
-                    'format': format_id if format_id else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                    'postprocessors': [],
-                })
+                if no_audio:
+                    # Download video without audio
+                    self.ydl_opts.update({
+                        'format': 'bestvideo[ext=mp4]/best[ext=mp4]',
+                        'postprocessors': [],
+                    })
+                else:
+                    # Normal video download
+                    self.ydl_opts.update({
+                        'format': format_id if format_id else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                        'postprocessors': [],
+                    })
                 output_path = final_output_path
 
             # Add custom FFmpeg arguments if provided
@@ -165,7 +174,7 @@ class TwitterHandler:
 
             self.ydl_opts['outtmpl'] = output_path
 
-            # Download the video
+            # Download the content
             with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
                 ydl.download([url])
 
@@ -174,8 +183,9 @@ class TwitterHandler:
                 print("\nCompressing video...")
                 output_file = output_path.replace('.mp4', '_compressed.mp4')
                 if QualityHandler.compress_video(output_path, output_file, compress_level):
-                    # Remove original file
-                    os.remove(output_path)
+                    # Remove original file if requested
+                    if no_original:
+                        os.remove(output_path)
                     final_output_path = output_file
                 else:
                     print("Compression failed, keeping original file")
@@ -183,8 +193,10 @@ class TwitterHandler:
             # Move file to correct directory based on extension
             final_output_path = FileHandler.move_to_correct_directory(final_output_path)
 
-            # Copy path to clipboard in background
-            copy_to_clipboard_async(final_output_path)
+            # Copy path to clipboard if requested
+            if copy_to_clipboard:
+                copy_to_clipboard_async(final_output_path)
+            
             return final_output_path
 
         except Exception as e:

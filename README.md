@@ -1,63 +1,131 @@
-# 🎥 crec - The Ultimate Media Downloader
+# crec
 
-> One command to download any media. Downloads and copies the file to clipboard automatically! 🚀
+A simple command-line tool to download videos from various platforms.
 
-## ✨ Features
+## Features
 
-- **One Command Magic**: Just paste the URL and get the file in your clipboard! ✨
-- **Smart Organization**: Files automatically sorted into videos, audio, photos folders 📁
-- **Cross-Platform**: Works on Windows, macOS, and Linux 💫
-- **Quality Control**: Choose your preferred quality or get the best available 🎯
+- Download videos from multiple platforms:
+  - YouTube
+  - Twitter
+  - Instagram
+  - TikTok
+  - And many more (experimental support for all other yt-dlp supported sites)
+- Download audio only
+- Download without audio
+- Download thumbnails
+- Compress videos
+- Copy file path to clipboard
+- List available qualities
+- Custom filename patterns
+- Playlist support
+- Custom FFmpeg arguments
 
-## 🚀 Quick Start
+## Installation
 
 ```bash
-# Install
 pip install crec
-
-# Download best quality
-crec "https://youtube.com/..."
-
-# Download audio only
-crec -a "https://youtube.com/..."
-
-# Download in 720p
-crec -q 720 "https://youtube.com/..."
 ```
 
-## 🛠️ Usage
+## Usage
 
 ```bash
+crec <url> [options]
+```
+
+### Options
+
+- `-a, --audio-only`: Download audio only (same as -nvi)
+- `-na, --no-audio`: Download without audio
+- `-nvi, --no-video`: Download only audio
+- `-nc, --no-copy`: Do not copy path to clipboard
+- `-vi, --video`: Download video (default behavior)
+- `-q, --quality`: Video quality (e.g., 720, 1080)
+- `-ql, --quality-list`: List available qualities and their sizes
+- `-co, --compress`: Compression level (0-9)
+- `-o, --output-dir`: Output directory
+- `-t, --thumbnail`: Download thumbnail
+- `-f, --filename`: Custom filename pattern (e.g., "{title}\_{quality}")
+- `-p, --playlist`: Download as playlist
+- `-ff, --ffmpeg-args`: Custom FFmpeg arguments
+- `-v, --version`: Show version information
+- `-d, --delete`: Delete all contents in ~/crec
+- `-op, --open`: Open ~/crec in file explorer
+
+### Examples
+
+```bash
+# Download a video
+crec https://youtube.com/watch?v=...
+
+# Download audio only
+crec https://youtube.com/watch?v=... -a
+
+# Download without audio
+crec https://youtube.com/watch?v=... -na
+
+# Download specific quality
+crec https://youtube.com/watch?v=... -q 720
+
 # List available qualities
-crec -ql "https://youtube.com/..."
+crec https://youtube.com/watch?v=... -ql
 
-# Download playlist
-crec -p "https://youtube.com/playlist?list=..."
+# Compress video
+crec https://youtube.com/watch?v=... -co 5
 
-# Download with thumbnail
-crec -t "https://youtube.com/..."
+# Download thumbnail
+crec https://youtube.com/watch?v=... -t
 
 # Custom filename
-crec -n "{title}_{quality}" "https://youtube.com/..."
+crec https://youtube.com/watch?v=... -f "{title}_{quality}"
 
-# Custom output directory
-crec -o "C:/Videos" "https://youtube.com/..."
+# Download playlist
+crec https://youtube.com/playlist?list=... -p
 
-# Open downloads folder
+# Custom FFmpeg arguments
+crec https://youtube.com/watch?v=... -ff "-c:v libx264 -crf 23"
+
+# Delete all contents in ~/crec
+crec -d
+
+# Open ~/crec in file explorer
 crec -op
 ```
 
-## 🎯 Supported Platforms
+## Filename Patterns
 
-- YouTube 🎥
-- Twitter 🐦
-- TikTok 📱
-- Instagram 📸
+You can use the following placeholders in your filename pattern:
 
-## 📝 About
+- `{title}`: Video title
+- `{id}`: Video ID
+- `{quality}`: Video quality
+- `{date}`: Upload date
 
-Built on top of [yt-dlp](https://github.com/yt-dlp/yt-dlp) for reliable downloads and enhanced with automatic file copying and organization features.
+Example: `-f "{title}_{quality}"` will create a file like `My Video_720.mp4`
 
----
+## Compression Levels
 
-Made with ❤️ for the internet community
+- `0`: No compression
+- `1`: Light compression (high quality)
+- `2-3`: Medium compression
+- `4-5`: Moderate compression
+- `6-7`: Heavy compression
+- `8-9`: Extreme compression (low quality)
+
+## Output Directories
+
+By default, files are saved in:
+
+- `~/crec/videos/` for videos
+- `~/crec/audio/` for audio files
+- `~/crec/photos/` for thumbnails
+
+You can change the output directory with `-o`.
+
+## Requirements
+
+- Python 3.7+
+- FFmpeg (for audio extraction and compression)
+
+## License
+
+MIT
