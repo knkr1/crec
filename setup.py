@@ -6,13 +6,17 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="crec",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="knkr1",
+    author_email="kaan@karesi.dev",
     description="The Ultimate Media Downloader - Download videos, audio, and images from various platforms",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/crec",
-    packages=find_packages(),
+    url="https://github.com/knkr1/crec",
+    packages=find_packages(include=['crec', 'crec.*']),
+    include_package_data=True,
+    package_data={
+        'crec': ['py.typed'],
+    },
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: End Users/Desktop",

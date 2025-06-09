@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include crec *.py
+recursive-include crec *.pyi
+recursive-include crec *.txt
+recursive-include crec *.json
+recursive-include crec *.md 
