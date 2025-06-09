@@ -9,11 +9,6 @@
 - **Cross-Platform**: Works on Windows, macOS, and Linux 💫
 - **Quality Control**: Choose your preferred quality or get the best available 🎯
 
-- **One Command Magic**: Just paste the URL and watch the magic happen! ✨
-- **Smart Organization**: Files automatically sorted into videos, audio, photos, and more! 📁
-- **Cross-Platform**: Works on Windows, macOS, and Linux like a charm! (tbh, i haven't tested it lol) 💫
-- **Clipboard Magic**: Downloaded file path automatically copied to clipboard! 📋
-
 ### 🎮 Basic Usage
 
 ```bash
