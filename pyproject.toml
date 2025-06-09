@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crec"
-version = "1.0.0"
+version = "1.0.1"
 description = "A command-line tool for downloading videos from various platforms"
 readme = "README.md"
 requires-python = ">=3.8"
