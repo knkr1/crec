@@ -29,73 +29,64 @@ def copy_to_clipboard_async(filepath: str) -> None:
     thread.start()
 
 class FileHandler:
-    # Define file type mappings
-    VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm'}
-    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'}
-    PHOTO_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.ico'}
-    
     @staticmethod
-    def get_target_directory(filepath: str, base_dir: Optional[str] = None) -> str:
-        """Determine the target directory based on file extension."""
-        base_dir = base_dir or os.path.expanduser('~/crec')
-        ext = os.path.splitext(filepath)[1].lower()
+    def _get_next_sequential_filename(base_dir: str, is_audio_only: bool) -> str:
+        """Generates a unique sequential filename like video1.mp4 or audio1.mp3."""
+        base_name = "audio" if is_audio_only else "video"
+        ext = "mp3" if is_audio_only else "mp4"
+        counter = 1
+        while True:
+            filename = f"{base_name}{counter}.{ext}"
+            full_path = os.path.join(base_dir, filename)
+            if not os.path.exists(full_path):
+                return full_path
+            counter += 1
+
+    @staticmethod
+    def get_base_output_directory(is_audio_only: bool = False, is_thumbnail: bool = False, output_dir: Optional[str] = None) -> str:
+        """Determine the base target directory based on content type."""
+        base_dir = output_dir or os.path.expanduser('~/crec')
         
-        if ext in FileHandler.VIDEO_EXTENSIONS:
-            target_dir = os.path.join(base_dir, 'videos')
-        elif ext in FileHandler.AUDIO_EXTENSIONS:
+        if is_audio_only:
             target_dir = os.path.join(base_dir, 'audio')
-        elif ext in FileHandler.PHOTO_EXTENSIONS:
+        elif is_thumbnail:
             target_dir = os.path.join(base_dir, 'photos')
-        else:
-            target_dir = os.path.join(base_dir, 'other')
+        else: # Default to video
+            target_dir = os.path.join(base_dir, 'videos')
             
         os.makedirs(target_dir, exist_ok=True)
         return target_dir
-    
+
     @staticmethod
-    def move_to_correct_directory(filepath: str) -> str:
-        """Move file to the correct directory based on its extension."""
-        if not os.path.exists(filepath):
-            return filepath
-
-        # Get the file extension
-        _, ext = os.path.splitext(filepath)
-        ext = ext.lower()
-
-        # Determine target directory based on extension
-        if ext in ['.mp4', '.mkv', '.avi', '.mov', '.wmv']:
-            target_dir = os.path.expanduser('~/crec/videos')
-        elif ext in ['.mp3', '.wav', '.m4a', '.aac', '.flac']:
-            target_dir = os.path.expanduser('~/crec/audio')
-        elif ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-            target_dir = os.path.expanduser('~/crec/photos')
+    def get_output_path(url: str, output_dir: Optional[str] = None, filename_pattern: Optional[str] = None, 
+                        is_audio_only: bool = False, is_thumbnail: bool = False, is_compressed: bool = False) -> str:
+        """Generate the output template string for yt-dlp.
+        This function returns a template string, not a final file path.
+        """
+        base_output_dir = FileHandler.get_base_output_directory(is_audio_only, is_thumbnail, output_dir)
+        
+        if filename_pattern:
+            # Use the provided pattern directly with yt-dlp's templating, ensuring extension
+            filename = f'{filename_pattern}.%(ext)s'
+        elif is_thumbnail:
+            # Default pattern for thumbnails
+            filename = '%(title)s.%(ext)s'
         else:
-            return filepath
+            # Default sequential naming for videos/audio if no pattern is given
+            # This path needs to be a concrete path, not a yt-dlp template
+            return FileHandler._get_next_sequential_filename(base_output_dir, is_audio_only)
 
-        # Create target directory if it doesn't exist
-        os.makedirs(target_dir, exist_ok=True)
-
-        # Get the filename
-        filename = os.path.basename(filepath)
-        target_path = os.path.join(target_dir, filename)
-
-        # If file is already in the correct directory, return the path
-        if os.path.dirname(filepath) == target_dir:
-            return filepath
-
-        # If target file already exists, add a number to the filename
-        counter = 1
-        while os.path.exists(target_path):
+        if is_compressed:
             name, ext = os.path.splitext(filename)
-            target_path = os.path.join(target_dir, f"{name}_{counter}{ext}")
-            counter += 1
+            # Ensure the ext is part of the name for compression suffixing before %(ext)s is resolved
+            # This might require a slight adjustment if yt-dlp's templating for %(ext)s is at the very end.
+            # For simplicity, we'll append _compressed before yt-dlp handles the final extension.
+            if filename_pattern: # If it was a custom pattern, apply suffix before %(ext)s
+                filename = f'{filename_pattern}_compressed.%(ext)s'
+            else: # If it was default yt-dlp pattern like %(title)s.%(ext)s
+                filename = '%(title)s_compressed.%(ext)s'
 
-        # Move the file
-        try:
-            shutil.move(filepath, target_path)
-            return target_path
-        except Exception:
-            return filepath
+        return os.path.join(base_output_dir, filename)
     
     @staticmethod
     def open_crec_directory():

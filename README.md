@@ -1,6 +1,6 @@
 # 🐊 crec
 
-Your Swiss Army knife for downloading media from the internet. Just paste a URL and watch the magic happen!
+Your Swiss Army knife for downloading media from the internet. It automaticly copies the file you downloaded, makes it easier to share.
 
 ## Features
 
@@ -116,13 +116,10 @@ crec -op
 crec -d
 ```
 
-## Why crec?
+## Why crec?:w
 
-- **Versatility**: Download from virtually any platform
-- **Simplicity**: One command to rule them all
-- **Power**: Advanced features when you need them
-- **Reliability**: Built on yt-dlp
-- **Flexibility**: Customize every aspect of your downloads
+1 - **Simple**: It just takes "crec" and your link to download!
+2 - **You decide**: You have full freedom over the file you're downloading.
 
 ## License
 

@@ -2,6 +2,8 @@ import os
 import yt_dlp
 import subprocess
 import sys
+import re
+import pyperclip
 from typing import Optional, List, Dict
 from ..utils.quality import QualityHandler
 from ..utils.notify import Notifier
@@ -100,105 +102,78 @@ class TwitterHandler:
         except:
             return None
 
-    def download(self, url: str, audio_only: bool = False, quality: Optional[str] = None, 
-                compress_level: int = 0, output_dir: Optional[str] = None, 
-                download_thumbnail: bool = False, filename_pattern: Optional[str] = None,
-                is_playlist: bool = False, ffmpeg_args: Optional[str] = None,
-                no_audio: bool = False, no_original: bool = False, copy_to_clipboard: bool = True) -> Optional[str]:
-        """Download a Twitter video."""
-        try:
-            # Reset progress
-            self.current_progress = 0
-            
-            # Get video info for custom naming
-            video_info = self._get_video_info(url)
-            if not video_info:
-                print("Error: Could not get video information")
-                return None
+    def download(self, url: str, audio_only: bool, quality: Optional[str], 
+                compress_level: int, output_dir: Optional[str], 
+                download_thumbnail: bool, filename_pattern: Optional[str], is_playlist: bool,
+                ffmpeg_args: Optional[str], no_audio: bool, copy_to_clipboard: bool) -> Optional[str]:
 
-            # Get format ID for requested quality
-            format_id = None
-            if quality:
-                try:
-                    target_quality = int(quality)
-                    format_id = QualityHandler.get_format_for_quality(url, target_quality)
-                    if not format_id:
-                        print(f"Quality {quality}p not available.")
-                        formats = QualityHandler.get_available_qualities(url)
-                        QualityHandler.list_qualities(formats)
-                        return None
-                except ValueError:
-                    print(f"Invalid quality format: {quality}")
-                    return None
+        outtmpl = FileHandler.get_output_path(url, output_dir, filename_pattern, audio_only, download_thumbnail)
 
-            # Get the final output path
-            final_output_path = self._get_next_filename(
-                audio_only, output_dir, filename_pattern, video_info
-            )
+        ydl_opts = {
+            'format': 'bestvideo+bestaudio/best' if not audio_only else 'bestaudio/best',
+            'outtmpl': outtmpl,
+            'nocheckcertificate': True,
+            'ignoreerrors': True,
+            'postprocessors': [],
+            'progress_hooks': [self.hook],
+            'quiet': True,
+        }
 
-            # Update options based on special flags
-            if audio_only:
-                self.ydl_opts.update({
-                    'format': 'bestaudio/best',
-                    'postprocessors': [{
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'mp3',
-                        'preferredquality': '192',
-                    }],
-                    'postprocessor_args': [
-                        '-vn',  # No video
-                        '-acodec', 'libmp3lame',  # Use MP3 codec
-                        '-q:a', '2',  # High quality audio
-                    ],
-                })
-                # For audio, we need to specify the output template without extension
-                output_path = final_output_path.replace('.mp3', '')
+        if quality:
+            format_id = QualityHandler.get_format_for_quality(url, int(quality))
+            if format_id:
+                ydl_opts['format'] = format_id + ('+bestaudio' if not audio_only else '')
             else:
-                if no_audio:
-                    # Download video without audio
-                    self.ydl_opts.update({
-                        'format': 'bestvideo[ext=mp4]/best[ext=mp4]',
-                        'postprocessors': [],
-                    })
-                else:
-                    # Normal video download
-                    self.ydl_opts.update({
-                        'format': format_id if format_id else 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                        'postprocessors': [],
-                    })
-                output_path = final_output_path
+                print(f"Warning: Quality {quality}p not found. Downloading best available.")
 
-            # Add custom FFmpeg arguments if provided
-            if ffmpeg_args:
-                self.ydl_opts['postprocessor_args'] = ffmpeg_args.split()
+        if audio_only:
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            })
+            ydl_opts['format'] = 'bestaudio/best'
 
-            self.ydl_opts['outtmpl'] = output_path
+        if no_audio:
+            ydl_opts['format'] = 'bestvideo/best'
 
-            # Download the content
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-                ydl.download([url])
+        if ffmpeg_args:
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegVideoConvertor',
+                'args': ffmpeg_args.split()
+            })
 
-            # Handle compression if requested
-            if compress_level > 0 and not audio_only:
-                print("\nCompressing video...")
-                output_file = output_path.replace('.mp4', '_compressed.mp4')
-                if QualityHandler.compress_video(output_path, output_file, compress_level):
-                    # Remove original file if requested
-                    if no_original:
-                        os.remove(output_path)
-                    final_output_path = output_file
-                else:
-                    print("Compression failed, keeping original file")
+        if download_thumbnail:
+            ydl_opts['skip_download'] = True
+            ydl_opts['writethumbnail'] = True
 
-            # Move file to correct directory based on extension
-            final_output_path = FileHandler.move_to_correct_directory(final_output_path)
+        if is_playlist:
+            ydl_opts['extract_flat'] = 'in_playlist'
+            if not filename_pattern:
+                base_dir = FileHandler.get_base_output_directory(audio_only, download_thumbnail, output_dir)
+                ydl_opts['outtmpl'] = os.path.join(base_dir, '%(playlist_index)s - %(title)s.%(ext)s')
 
-            # Copy path to clipboard if requested
-            if copy_to_clipboard:
-                copy_to_clipboard_async(final_output_path)
-            
-            return final_output_path
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info_dict = ydl.extract_info(url, download=True)
+                final_filepath = ydl.prepare_filename(info_dict)
+
+            if compress_level > 0:
+                compressed_filepath = FileHandler.get_output_path(url, output_dir, filename_pattern, is_compressed=True)
+                if QualityHandler.compress_video(final_filepath, compressed_filepath, compress_level):
+                    os.remove(final_filepath)
+                    final_filepath = compressed_filepath
+
+            if copy_to_clipboard and final_filepath:
+                copy_to_clipboard_async(os.path.abspath(final_filepath))
+                print(f"Path copied to clipboard: {os.path.abspath(final_filepath)}")
+
+            return final_filepath
 
         except Exception as e:
-            print(f"Error downloading video: {str(e)}")
-            return None 
+            print(f"An error occurred: {e}")
+            return None
+
+    def hook(self, d):
+        if d['status'] == 'downloading':
+            pass 
