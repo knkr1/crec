@@ -2,6 +2,9 @@
 
 Your Swiss Army knife for downloading media from the internet. It automaticly copies the file you downloaded, makes it easier to share.
 
+Note: I don't maintain it and probably will not.
+If you're experiencing any problems, install ffmpeg to your computer. preferably with choco since its easier. `choco install ffmpeg`
+
 ## Features
 
 - **Universal Downloader**: Download from multiple platforms:
