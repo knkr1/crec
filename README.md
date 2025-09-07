@@ -1,6 +1,6 @@
 # 🐊 crec
 
-Your Swiss Army knife for downloading media from the internet. It automaticly copies the file you downloaded, makes it easier to share.
+pretty kool cli app! install anything from any link (everything which yt-dlp supports) and get instant results to your clipboard!
 
 Note: I don't maintain it and probably will not.
 If you're experiencing any problems, install ffmpeg to your computer. preferably with choco since its easier. `choco install ffmpeg`
@@ -119,10 +119,10 @@ crec -op
 crec -d
 ```
 
-## Why crec?:w
+## Why crec?
 
-1 - **Simple**: It just takes "crec" and your link to download!
-2 - **You decide**: You have full freedom over the file you're downloading.
+- **Simple**: It just takes "crec" and your link to download!
+- **You decide**: You have full freedom over the file you're downloading.
 
 ## License
 
