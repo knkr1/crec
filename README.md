@@ -1,6 +1,6 @@
 # 🐊 crec
 
-pretty kool cli app! install anything from any link (everything which yt-dlp supports) and get instant results to your clipboard!
+install anything from any link (everything which yt-dlp supports) and get instant results to your clipboard!
 
 Note: I don't maintain it and probably will not.
 If you're experiencing any problems, install ffmpeg to your computer. preferably with choco since its easier. `choco install ffmpeg`
