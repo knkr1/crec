@@ -5,6 +5,8 @@ install anything from any link (everything which yt-dlp supports) and get instan
 Note: I don't maintain it and probably will not.
 If you're experiencing any problems, install ffmpeg to your computer. preferably with choco since its easier. `choco install ffmpeg`
 
+Note 2: **THIS IS AN AI SLOP PROJECT.** I remember that I made it mostly with cursor. At the moment, I'm against AI content so I'm not advising you to use this tool. However, I'll not delete it because I know it will help someone. By using this tool, I'm assuming that you're aware of this fact.
+
 ## Features
 
 - **Universal Downloader**: Download from multiple platforms:
