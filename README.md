@@ -64,20 +64,39 @@ parsing stdout and hoping.
 
 ## Install
 
-On Windows, download `crec.exe` from the
-[releases page](https://github.com/knkr1/crec/releases) and drop it somewhere on your
-PATH. You don't need Python for that build.
+### Windows, no Python
 
-The exe isn't code-signed, so the first time you run it Windows will show the
-"Windows protected your PC" box. Click "More info", then "Run anyway". Getting rid of
-that permanently needs a signing certificate that costs a couple hundred dollars a year,
-which I'm not doing for this.
+Open PowerShell and paste this:
 
-If you have Python 3.11 or newer, this works everywhere:
+```powershell
+irm https://raw.githubusercontent.com/knkr1/crec/main/install.ps1 | iex
+```
+
+It grabs the latest `crec.exe`, checks it against the published SHA256, puts it in
+`%LOCALAPPDATA%\Programs\crec`, and adds that to your PATH so you can just type `crec`.
+No admin rights and nothing else to install. Running it again upgrades in place.
+
+You'll need to open a new terminal afterwards, because PATH changes don't reach windows
+that are already open.
+
+If you'd rather do it by hand, the exe is on the
+[releases page](https://github.com/knkr1/crec/releases) — download it and put it in a
+folder that's on your PATH.
+
+Either way, Windows will show a "Windows protected your PC" box the first time, because
+the exe isn't code-signed. Click "More info", then "Run anyway". Making that go away
+needs a signing certificate that costs a couple hundred dollars a year, which I'm not
+paying for this.
+
+### Anywhere, with Python 3.11+
 
 ```bash
 pipx install crec     # or pip install crec
 ```
+
+If you previously installed crec with pip and now want the standalone exe, uninstall the
+pip one first (`pip uninstall crec`) — otherwise it stays ahead on your PATH and you'll
+keep running the old version. The installer will warn you if it spots this.
 
 You don't have to install ffmpeg. crec downloads it the first time it needs it and keeps
 it in its own folder, and if you already have ffmpeg on your PATH it'll just use that
