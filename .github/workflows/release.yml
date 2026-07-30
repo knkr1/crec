@@ -1,0 +1,65 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e . pyinstaller
+      - run: pyinstaller crec.spec --noconfirm
+      - name: Verify before publishing
+        run: |
+          .\dist\crec.exe --version
+          .\dist\crec.exe presets
+      - name: Checksum
+        run: |
+          $hash = (Get-FileHash dist\crec.exe -Algorithm SHA256).Hash
+          "$hash  crec.exe" | Out-File -FilePath dist\crec.exe.sha256 -Encoding utf8
+          echo "sha256=$hash" >> $env:GITHUB_OUTPUT
+        id: sum
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/crec.exe
+            dist/crec.exe.sha256
+          body: |
+            **Windows:** download `crec.exe` below and put it anywhere on your `PATH`.
+            No Python required. ffmpeg is fetched automatically on first use.
+
+            **Anywhere else:** `pipx install crec`
+
+            SHA256: `${{ steps.sum.outputs.sha256 }}`
+          generate_release_notes: true
+
+  pypi:
+    runs-on: ubuntu-latest
+    # Uses the PYPI_API_TOKEN secret that v1 already had configured. This job
+    # replaces v1's separate publish.yml, which triggered on `release: created`
+    # - that would never fire here, because a release created by a workflow's
+    # GITHUB_TOKEN does not trigger further workflows.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+      - name: Publish
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*

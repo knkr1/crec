@@ -1,184 +1,563 @@
-import os
-import shutil
-import sys
+"""The command line.
+
+Design rule: the common path takes zero arguments. You copy a link, you type
+``crec``, you paste the file. Everything else is opt-in, and anything that can be
+expressed as a bundle of primitives is a preset in TOML rather than code here.
+"""
+
+from __future__ import annotations
+
 import argparse
-import importlib.metadata
+import os
+import re
 import subprocess
-from crec.sources.youtube import YouTubeHandler
-from crec.sources.twitter import TwitterHandler
-from crec.sources.tiktok import TikTokHandler
-from crec.sources.instagram import InstagramHandler
-from crec.utils.quality import QualityHandler
-from crec.utils.notify import Notifier
-from crec.utils.file_handler import FileHandler
-from typing import Optional, List, Dict
-from .sources.handler import Handler
-from .utils.version import check_version
+import sys
+from pathlib import Path
 
-def get_version():
-    try:
-        return importlib.metadata.version("crec")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+from . import __version__, clipboard, deps, download, media, paths, presets, state
+from .download import Progress, fetch
+from .errors import CrecError
+from .options import PRIMITIVES, Options
 
-def delete_crec_contents():
-    """Delete all contents in the crec directory."""
-    crec_dir = os.path.expanduser('~/crec')
-    if os.path.exists(crec_dir):
-        for item in os.listdir(crec_dir):
-            item_path = os.path.join(crec_dir, item)
-            if os.path.isfile(item_path):
-                os.remove(item_path)
-            elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-        print("All contents in ~/crec have been deleted.")
-    else:
-        print("~/crec directory does not exist.")
+_URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+SUBCOMMANDS = {"update", "doctor", "presets"}
 
-def open_crec_explorer():
-    """Open file explorer at the crec directory."""
-    crec_dir = os.path.expanduser('~/crec')
-    if not os.path.exists(crec_dir):
-        os.makedirs(crec_dir)
-    
-    if sys.platform == 'win32':
-        os.startfile(crec_dir)
-    elif sys.platform == 'darwin':  # macOS
-        subprocess.run(['open', crec_dir])
-    else:  # Linux
-        subprocess.run(['xdg-open', crec_dir])
-    print(f"Opened {crec_dir} in file explorer.")
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Download videos from various platforms')
-    
-    # URL argument (positional)
-    parser.add_argument('url', nargs='?', help='URL of the video to download')
-    
-    # Special argument combinations
-    parser.add_argument('-na', '--no-audio', action='store_true', help='Download without audio')
-    parser.add_argument('-nvi', '--no-video', action='store_true', help='Download only audio')
-    parser.add_argument('-nc', '--no-copy', action='store_true', help='Do not copy path to clipboard')
-    parser.add_argument('-vi', '--video', action='store_true', help='Download video (default behavior)')
-    
-    # Regular arguments
-    parser.add_argument('-a', '--audio-only', action='store_true', help='Download audio only (same as -nvi)')
-    parser.add_argument('-q', '--quality', help='Video quality (e.g., 720, 1080)')
-    parser.add_argument('-ql', '--quality-list', action='store_true', help='List available qualities and their sizes')
-    parser.add_argument('-co', '--compress', type=int, default=0, help='Compression level (0-9)')
-    parser.add_argument('-o', '--output-dir', help='Output directory')
-    parser.add_argument('-t', '--thumbnail', action='store_true', help='Download thumbnail')
-    parser.add_argument('-f', '--filename', help='Custom filename pattern (e.g., "{title}_{quality}")')
-    parser.add_argument('-p', '--playlist', action='store_true', help='Download as playlist')
-    parser.add_argument('-ff', '--ffmpeg-args', help='Custom FFmpeg arguments')
-    parser.add_argument('-v', '--version', action='store_true', help='Show version information')
-    
-    # Utility commands
-    parser.add_argument('-d', '--delete', action='store_true', help='Delete all contents in ~/crec')
-    parser.add_argument('-op', '--open', action='store_true', help='Open ~/crec in file explorer')
-    
-    args = parser.parse_args()
-    
-    # Handle utility commands first
-    if args.delete:
-        delete_crec_contents()
-        sys.exit(0)
-    
-    if args.open:
-        open_crec_explorer()
-        sys.exit(0)
-    
-    # Handle special combinations
-    if args.no_audio and args.no_video:
-        print("Error: Cannot use both -na and -nvi")
-        sys.exit(1)
-    
-    # Set audio_only based on -nvi or -a
-    if args.no_video or args.audio_only:
-        args.audio_only = True
-    
-    return args
+# --------------------------------------------------------------------------- #
+# argument parsing
+# --------------------------------------------------------------------------- #
 
-def show_version():
-    version = get_version()
-    print(f"crec v{version}")
-    print("\nSupported platforms:")
-    print("- YouTube")
-    print("- Twitter")
-    print("- Instagram")
-    print("- TikTok")
-    print("- And many more (experimental support for all other yt-dlp supported sites)")
-    sys.exit(0)
+class _Formatter(argparse.RawDescriptionHelpFormatter):
+    def __init__(self, prog: str) -> None:
+        super().__init__(prog, max_help_position=30, width=96)
 
-def main():
-    """Main entry point for the CLI."""
-    args = parse_args()
-    
-    if args.version:
-        show_version()
-    
-    # Check for updates
-    has_update, current, latest = check_version()
-    if has_update:
-        print(f"\n✨ A new version of crec is available!")
-        print(f"Current version: {current}")
-        print(f"Latest version: {latest}")
-        print("Update with: pip install --upgrade crec\n")
-    
-    if not args.url:
-        print("Error: URL is required")
-        print("\nUsage: crec <url> [options]")
-        print("\nExample: crec https://youtube.com/watch?v=... -q 720")
-        sys.exit(1)
 
-    # Handle quality list
-    if args.quality_list:
-        qualities = QualityHandler.get_available_qualities(args.url)
-        if qualities:
-            print("\nAvailable qualities:")
-            print("─" * 30)
-            print(f"{'Quality':<10} {'Size':<10}")
-            print("─" * 30)
-            has_zero_size = False
-            for q in qualities:
-                size_mb = q['filesize'] / (1024 * 1024) if q['filesize'] else 0
-                if size_mb == 0:
-                    has_zero_size = True
-                format_str = f" [{q['ext']}]" if q['ext'] != 'mp4' else ""
-                print(f"{q['height']}p{format_str:<5} {size_mb:.1f}MB")
-            print("─" * 30)
-            if has_zero_size:
-                print("\n⚠️  Note: Some qualities show 0.0MB because the website doesn't provide size information.")
-                print("The actual file size will be available after downloading.")
-            print("\nUse -q <quality> to download specific quality")
-        else:
-            print("Error: Could not get quality information")
-        sys.exit(0)
-
-    handler = Handler()
-    if not handler.can_handle(args.url):
-        print("Error: Unsupported URL")
-        sys.exit(1)
-
-    result = handler.download(
-        url=args.url,
-        audio_only=args.audio_only,
-        quality=args.quality,
-        compress_level=args.compress,
-        output_dir=args.output_dir,
-        download_thumbnail=args.thumbnail,
-        filename_pattern=args.filename,
-        is_playlist=args.playlist,
-        ffmpeg_args=args.ffmpeg_args,
-        no_audio=args.no_audio,
-        copy_to_clipboard=not args.no_copy
+def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="crec",
+        formatter_class=_Formatter,
+        description=(
+            "yt-dlp + ffmpeg with a clipboard.\n\n"
+            "Run `crec` with no arguments: it takes the URL from your clipboard,\n"
+            "downloads it, and puts the finished file back on your clipboard."
+        ),
+        epilog=(
+            "examples:\n"
+            "  crec                        download whatever URL is on the clipboard\n"
+            "  crec --discord              same, shrunk to fit Discord\n"
+            "  crec -c 0:10-0:40 -s 8      trim to 30s and fit under 8 MB\n"
+            "  crec -a                     audio only (reuses the last URL)\n"
+            "  crec --gif -c 1:00-1:05     five-second GIF\n"
+            "\n"
+            "commands:\n"
+            "  crec update                 update yt-dlp now\n"
+            "  crec doctor [--fix]         check (and repair) the setup\n"
+            "  crec presets [--edit]       list presets / open your presets file\n"
+        ),
     )
 
-    if result:
-        print(f"\nDownload completed: {result}")
+    parser.add_argument("url", nargs="?", help="URL (default: read from clipboard)")
+
+    core = parser.add_argument_group("the ones you'll actually use")
+    core.add_argument("-q", "--quality", type=int, metavar="H", help="max height, e.g. 720")
+    core.add_argument("-a", "--audio", action="store_true", default=None, help="audio only")
+    core.add_argument("-c", "--cut", metavar="A-B", help="trim to a range, e.g. 0:10-0:40")
+    core.add_argument(
+        "-s", "--size", type=float, metavar="MB",
+        help="re-encode to land under this many MB",
+    )
+    core.add_argument("-o", "--output", metavar="DIR", help="output folder")
+    core.add_argument(
+        "-n", "--no-copy", action="store_true", default=None,
+        help="don't touch the clipboard",
+    )
+
+    more = parser.add_argument_group("finer control")
+    more.add_argument("--format", metavar="EXT", help="mp4 mkv webm gif mp3 m4a wav")
+    more.add_argument("--crf", type=int, metavar="N", help="quality instead of size: 18 great, 28 small")
+    more.add_argument("--scale", type=int, metavar="W", help="max width in pixels")
+    more.add_argument("--fps", type=int, metavar="N", help="force frame rate")
+    more.add_argument("--mute", action="store_true", default=None, help="drop the audio track")
+    more.add_argument("--exact", action="store_true", default=None, help="frame-exact cut (slower)")
+    more.add_argument("-t", "--thumbnail", action="store_true", default=None, help="also save the thumbnail")
+    more.add_argument("-p", "--playlist", action="store_true", default=None, help="download the whole playlist")
+    more.add_argument("--open", action="store_true", default=None, help="reveal the file when done")
+    more.add_argument("--ffmpeg", metavar="ARGS", help="extra raw ffmpeg arguments")
+    more.add_argument("--last", action="store_true", help="reuse the last URL, ignoring the clipboard")
+    more.add_argument("-v", "--version", action="store_true", help="show version and exit")
+
+    # Ask the parser which option strings are taken rather than maintaining a
+    # hand-written reserved list that will silently drift out of date. A user's
+    # preset must never be able to crash crec by picking a name we already use.
+    taken = {
+        option
+        for action in parser._actions  # noqa: SLF001 - no public accessor exists
+        for option in action.option_strings
+    }
+
+    if preset_set.presets:
+        group = parser.add_argument_group(
+            "presets",
+            "From presets.toml. Add your own - see `crec presets --edit`.",
+        )
+        for name in list(preset_set.names()):
+            if f"--{name}" in taken:
+                preset_set.warnings.append(
+                    f"preset '{name}' is ignored - --{name} is already a built-in flag. "
+                    f"Rename it in your presets file."
+                )
+                del preset_set.presets[name]
+                continue
+            preset = preset_set.presets[name]
+            group.add_argument(
+                f"--{name}",
+                action="store_true",
+                default=None,
+                dest=f"preset_{name.replace('-', '_')}",
+                help=preset.description or "(no description)",
+            )
+    return parser
+
+
+def explicit_options(args: argparse.Namespace) -> dict:
+    """Only the flags the user actually typed, mapped onto primitives."""
+    mapping = {
+        "quality": args.quality,
+        "audio_only": args.audio,
+        "no_audio": args.mute,
+        "cut": args.cut,
+        "exact_cut": args.exact,
+        "target_mb": args.size,
+        "crf": args.crf,
+        "format": args.format,
+        "fps": args.fps,
+        "scale": args.scale,
+        "thumbnail": args.thumbnail,
+        "playlist": args.playlist,
+        "output_dir": args.output,
+        "copy": False if args.no_copy else None,
+        "open_folder": args.open,
+        "ffmpeg_args": _split_ffmpeg(args.ffmpeg),
+    }
+    return {key: value for key, value in mapping.items() if value is not None}
+
+
+def _split_ffmpeg(raw: str | None) -> list[str] | None:
+    if not raw:
+        return None
+    import shlex
+
+    return shlex.split(raw)
+
+
+def resolve_options(
+    args: argparse.Namespace, preset_set: presets.PresetSet
+) -> tuple[Options, list[str]]:
+    """defaults < presets (in the order given) < explicit flags."""
+    options = Options().merged_with(preset_set.defaults)
+
+    used: list[str] = []
+    for name in preset_set.names():
+        if getattr(args, f"preset_{name.replace('-', '_')}", None):
+            options = options.merged_with(preset_set.presets[name].values)
+            used.append(name)
+
+    return options.merged_with(explicit_options(args)), used
+
+
+# --------------------------------------------------------------------------- #
+# URL sourcing
+# --------------------------------------------------------------------------- #
+
+def find_url(explicit: str | None, *, prefer_last: bool) -> tuple[str, str]:
+    """Return ``(url, where_it_came_from)``."""
+    if explicit:
+        match = _URL.search(explicit)
+        if match:
+            return match.group(0), "argument"
+        raise CrecError(f"'{explicit}' is not a URL.")
+
+    if not prefer_last:
+        match = _URL.search(clipboard.read_text() or "")
+        if match:
+            return match.group(0), "clipboard"
+
+    remembered = state.last_url()
+    if remembered:
+        return remembered, "last run"
+
+    raise CrecError(
+        "No URL found. Copy a link and run `crec`, or pass one: crec <url>"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# post-processing
+# --------------------------------------------------------------------------- #
+
+def _temp_beside(path: Path, suffix: str) -> Path:
+    return path.with_name(f"{path.stem}.crec-tmp{suffix}")
+
+
+def _plan_download_quality(url: str, options: Options) -> tuple[int | None, str | None]:
+    """Cap the download resolution to what the size target can actually use.
+
+    Without this, ``crec --discord`` on a long video pulls the full 4K stream and
+    then squashes it to 144p - minutes of downloading for pixels that get thrown
+    away. Returns ``(height_cap, message)``; both None means download normally.
+
+    Also surfaces an impossible target *before* the download rather than after.
+    """
+    peeked = download.peek(url)
+    if peeked is None or peeked.duration is None:
+        return None, None  # live stream, or the site won't say - don't guess
+
+    duration = peeked.duration
+    if options.cut:
+        start, end = media.parse_cut(options.cut)
+        duration = (end - start) if end is not None else max(duration - start, 1.0)
+
+    source_height = peeked.height or 1080
+    probe = media.Probe(
+        duration=duration,
+        width=int(source_height * 16 / 9),
+        height=source_height,
+        fps=30.0,
+        has_audio=not options.no_audio,
+        has_video=True,
+        size_bytes=0,
+    )
+
+    # Let ImpossibleTarget propagate: far better to hear it now than after a
+    # several-hundred-megabyte download.
+    plan = media.plan_encode(
+        probe,
+        options.target_mb,
+        keep_audio=not options.no_audio,
+        audio_kbps=options.audio_quality,
+    )
+
+    planned = plan.height or source_height
+    cap = media.rung_above(planned)
+    if cap >= source_height:
+        return None, None
+
+    saved = f"{source_height}p" if peeked.height else "the largest stream"
+    return cap, (
+        f"targeting {options.target_mb:g} MB means ~{planned}p, "
+        f"so downloading {cap}p instead of {saved}"
+    )
+
+
+def _trim_verdict(
+    path: Path, spec: str, source_duration: float | None
+) -> tuple[bool, str | None]:
+    """Did the site honour our requested range?
+
+    Rather than maintaining a list of which extractors support
+    ``--download-sections``, measure the result. Returns
+    ``(needs_local_trim, warning)``.
+    """
+    start, end = media.parse_cut(spec)
+
+    if end is not None:
+        expected = end - start
+    elif source_duration is not None:
+        # Open-ended cut: a honoured range leaves source_duration - start.
+        expected = max(source_duration - start, 0.0)
     else:
-        print("\nDownload failed")
-        sys.exit(1)
+        return False, (
+            f"could not confirm the {spec} range was applied - "
+            f"the site did not report a duration"
+        )
+
+    try:
+        actual = media.probe(path).duration
+    except CrecError:
+        return False, None
+
+    # 10% slack (min 2s) absorbs keyframe-aligned cuts overshooting slightly,
+    # while still catching a range that was ignored outright.
+    if actual <= expected + max(2.0, expected * 0.10):
+        return False, None
+    return True, None
+
+
+def post_process(
+    path: Path, options: Options, say, *, source_duration: float | None = None
+) -> Path:
+    """Apply cut/size/format work to a downloaded file. Returns the final path."""
+    current = path
+
+    if options.cut:
+        needs_trim, warning = _trim_verdict(current, options.cut, source_duration)
+        if warning:
+            say(None)
+            print(f"  note: {warning}", file=sys.stderr)
+        if needs_trim:
+            say("trimming (the site ignored our range request)")
+            temporary = _temp_beside(current, current.suffix)
+            media.trim(current, temporary, options.cut, exact=options.exact_cut)
+            current = media.replace(temporary, current)
+
+    if (options.format or "") == "gif":
+        say("converting to gif")
+        temporary = _temp_beside(current, ".gif")
+        media.to_gif(current, temporary, fps=options.fps or 15, width=options.scale or 480)
+        gif = current.with_suffix(".gif")
+        gif.unlink(missing_ok=True)
+        temporary.rename(gif)
+        current.unlink(missing_ok=True)
+        return gif
+
+    if options.target_mb is not None:
+        info = media.probe(current)
+        if info.size_mb <= options.target_mb:
+            say(None)
+            print(
+                f"  already {info.size_mb:.1f} MB - under your {options.target_mb:g} MB "
+                f"target, left untouched",
+                file=sys.stderr,
+            )
+        elif not info.has_video:
+            say("compressing audio")
+            temporary = _temp_beside(current, current.suffix)
+            media.convert(
+                current, temporary,
+                audio_kbps=int(options.target_mb * 8192 / max(info.duration, 1)),
+            )
+            current = media.replace(temporary, current)
+        else:
+            def note(text: str) -> None:
+                say(None)
+                print(f"  {text}", file=sys.stderr)
+
+            def pass_label(pass_number: int, attempt: int) -> None:
+                suffix = "" if attempt == 1 else f", retry {attempt - 1}"
+                say(
+                    f"compressing to fit {options.target_mb:g} MB "
+                    f"(pass {pass_number}/2{suffix})"
+                )
+
+            temporary = _temp_beside(current, ".mp4")
+            media.fit_to_size(
+                current, temporary, info, options.target_mb,
+                keep_audio=not options.no_audio,
+                audio_kbps=options.audio_quality,
+                width=options.scale,
+                fps=options.fps,
+                extra_args=options.ffmpeg_args,
+                on_pass=pass_label,
+                on_note=note,
+            )
+            current = media.replace(temporary, current)
+
+    elif options.needs_reencode:
+        say("re-encoding")
+        suffix = f".{options.format}" if options.format else current.suffix
+        temporary = _temp_beside(current, suffix)
+        media.convert(
+            current, temporary,
+            crf=options.crf,
+            width=options.scale,
+            fps=options.fps,
+            drop_audio=options.no_audio,
+            audio_kbps=options.audio_quality,
+            extra_args=options.ffmpeg_args,
+        )
+        current = media.replace(temporary, current)
+
+    return current
+
+
+# --------------------------------------------------------------------------- #
+# subcommands
+# --------------------------------------------------------------------------- #
+
+def cmd_update() -> int:
+    changed, message = deps.update_ytdlp()
+    print(message)
+    return 0 if changed or "already current" in message else 1
+
+
+def cmd_presets(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="crec presets")
+    parser.add_argument("--edit", action="store_true", help="open your presets file")
+    parser.add_argument("--keys", action="store_true", help="list the available keys")
+    args = parser.parse_args(argv)
+
+    if args.keys:
+        print("Keys you can use in a preset:\n")
+        for primitive in PRIMITIVES:
+            print(f"  {primitive.name:<14} {primitive.type.__name__:<5} {primitive.help}")
+        return 0
+
+    target = paths.user_presets_file()
+    if args.edit:
+        if presets.write_starter_file(target):
+            print(f"created {target}")
+        _reveal(target, select=False)
+        print(f"opening {target}")
+        return 0
+
+    preset_set = presets.load()
+    for warning in preset_set.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+    if preset_set.defaults:
+        print("[defaults] applied to every run:")
+        for key, value in preset_set.defaults.items():
+            print(f"  {key} = {value!r}")
+        print()
+
+    print("Presets (use as --name):\n")
+    for name in preset_set.names():
+        preset = preset_set.presets[name]
+        marker = "*" if preset.source == "user" else " "
+        settings = " ".join(f"{k}={v}" for k, v in preset.values.items())
+        print(f" {marker}--{name:<16} {preset.description}")
+        if settings:
+            print(f"    {' ' * 16} {settings}")
+    print(f"\n * = yours. Edit them with: crec presets --edit\n   ({target})")
+    return 0
+
+
+def _reveal(path: Path, *, select: bool = True) -> None:
+    """Show *path* in the file manager, or open it if ``select`` is false."""
+    try:
+        if sys.platform == "win32":
+            if select:
+                # explorer returns non-zero even on success; check=False is right.
+                subprocess.run(["explorer", f"/select,{path}"], check=False)
+            else:
+                os.startfile(str(path))  # noqa: S606 - intended shell association
+        elif sys.platform == "darwin":
+            subprocess.run(["open"] + (["-R"] if select else []) + [str(path)], check=False)
+        elif select:
+            subprocess.run(["xdg-open", str(path.parent)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(path)], check=False)
+    except OSError:
+        pass
+
+
+# --------------------------------------------------------------------------- #
+# main
+# --------------------------------------------------------------------------- #
+
+def run(argv: list[str]) -> int:
+    if argv and argv[0] in SUBCOMMANDS:
+        command, rest = argv[0], argv[1:]
+        if command == "update":
+            return cmd_update()
+        if command == "presets":
+            return cmd_presets(rest)
+        if command == "doctor":
+            return deps.doctor(fix="--fix" in rest)
+
+    preset_set = presets.load()
+    parser = build_parser(preset_set)
+    args = parser.parse_args(argv)
+
+    if args.version:
+        print(f"crec {__version__}  (yt-dlp {deps.ytdlp_version()})")
+        return 0
+
+    for warning in preset_set.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+    options, used_presets = resolve_options(args, preset_set)
+    url, source = find_url(args.url, prefer_last=args.last)
+
+    output_dir = paths.ensure(
+        Path(options.output_dir).expanduser() if options.output_dir else paths.downloads_dir()
+    )
+
+    progress = Progress()
+    label = f" ({', '.join('--' + p for p in used_presets)})" if used_presets else ""
+    print(f"crec {url}{label}", file=sys.stderr)
+    if source == "last run":
+        print("  (reusing the last URL - the clipboard has no link)", file=sys.stderr)
+
+    if options.target_mb is not None and options.quality is None:
+        progress.stage("checking what we need")
+        cap, message = _plan_download_quality(url, options)
+        progress.done()
+        if cap is not None:
+            options.quality = cap
+            print(f"  {message}", file=sys.stderr)
+
+    def say(stage: str | None) -> None:
+        progress.done() if stage is None else progress.stage(stage)
+
+    try:
+        downloaded = fetch(url, options, output_dir, progress)
+        if len(downloaded) > 1 and options.needs_reencode:
+            progress.done()
+            print(
+                f"  {len(downloaded)} files to re-encode - this will take a while",
+                file=sys.stderr,
+            )
+        finals = [
+            post_process(item.path, options, say, source_duration=item.source_duration)
+            for item in downloaded
+        ]
+    finally:
+        progress.done()
+
+    state.remember(url, finals)
+
+    for path in finals:
+        size = path.stat().st_size / 1_048_576
+        print(f"  {path}  ({size:.1f} MB)")
+    # Paths go to stdout so they can be piped; status goes to stderr. Flush here
+    # or block-buffered stdout lands after the stderr lines when redirected.
+    sys.stdout.flush()
+
+    if options.copy:
+        try:
+            clipboard.copy_files(finals)
+            noun = "file" if len(finals) == 1 else f"{len(finals)} files"
+            print(f"copied to clipboard - paste anywhere ({noun})", file=sys.stderr)
+        except clipboard.ClipboardUnsupported as exc:
+            print(f"note: {exc}", file=sys.stderr)
+        except OSError as exc:
+            print(f"warning: could not copy to clipboard: {exc}", file=sys.stderr)
+
+    if options.open_folder and finals:
+        _reveal(finals[0])
+
+    _passive_update_check()
+    return 0
+
+
+def _passive_update_check() -> None:
+    """Runs only after a successful download, so it never costs latency."""
+    if not deps.should_check_update():
+        return
+    deps.record_update_check()
+    latest = deps.latest_ytdlp_version()
+    if not latest:
+        return
+    current = deps.ytdlp_version()
+    if deps._normalise(current) != deps._normalise(latest):
+        print(
+            f"\nyt-dlp {latest} is out (you have {current}). Run: crec update",
+            file=sys.stderr,
+        )
+
+
+def main() -> int:
+    deps.activate_ytdlp()
+    try:
+        return run(sys.argv[1:])
+    except CrecError as exc:
+        print(f"crec: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\ncancelled", file=sys.stderr)
+        return 130
+
 
 if __name__ == "__main__":
-    main() 
+    raise SystemExit(main())

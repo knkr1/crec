@@ -1,42 +1,17 @@
-# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
+.venv/
 venv/
-env/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-
-# Distribution
+build/
 dist/
-build/ 
+.pytest_cache/
+.ruff_cache/
+*.spec.bak
+
+# graphify knowledge graph output
+graphify-out/
+
+# local agent/editor tooling, not part of the project
+.claude/
+CLAUDE.md

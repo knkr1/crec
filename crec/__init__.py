@@ -1,5 +1,3 @@
-"""
-crec - A simple command-line tool to download videos from various platforms
-"""
+"""crec - yt-dlp + ffmpeg with a clipboard."""
 
-__version__ = "1.0.3" 
+__version__ = "2.0.0"

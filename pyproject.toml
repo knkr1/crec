@@ -1,28 +1,37 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "crec"
-version = "1.0.3"
-description = "A command-line tool for downloading videos from various platforms"
+version = "2.0.0"
+description = "yt-dlp + ffmpeg with a clipboard. Download, trim, shrink, paste."
 readme = "README.md"
-requires-python = ">=3.8"
-license = {text = "MIT"}
-authors = [
-    {name = "Karesi", email = "kaan@karesi.dev"}
-]
-dependencies = [
-    "yt-dlp",
-    "ffmpeg-python",
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "knkr1" }]
+keywords = ["yt-dlp", "ffmpeg", "download", "clipboard", "video"]
+classifiers = [
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
 ]
 
-[project.scripts]
-crec = "crec.main:main"
-
-[tool.setuptools]
-packages = ["crec"]
+# Deliberately minimal. ffmpeg is fetched at runtime (never redistributed, so its
+# GPL never becomes our problem) and the clipboard is pure ctypes, so a frozen
+# onefile build stays small and has nothing to go wrong at import time.
+dependencies = ["yt-dlp>=2025.1.1"]
 
 [project.urls]
 Homepage = "https://github.com/knkr1/crec"
-Repository = "https://github.com/knkr1/crec.git" 
+
+[project.scripts]
+crec = "crec.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["crec*"]
+
+[tool.setuptools.package-data]
+crec = ["presets.toml"]

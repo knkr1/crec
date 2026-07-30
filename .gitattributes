@@ -1,0 +1,10 @@
+# Normalise to LF in the repository. CI runs on Linux and macOS as well as
+# Windows, so leaving this to each machine's autocrlf setting causes phantom
+# whole-file diffs.
+* text=auto eol=lf
+
+# Never touch binaries.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary

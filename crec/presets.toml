@@ -1,0 +1,66 @@
+# Built-in presets. Every table here automatically becomes a --flag.
+#
+# You do not need to edit this file. Instead create your own at:
+#   Windows  %APPDATA%\crec\presets.toml
+#   macOS    ~/Library/Application Support/crec/presets.toml
+#   Linux    ~/.config/crec/presets.toml
+#
+# Tables there are merged on top of these, so you can redefine a built-in
+# (platform size limits change) or add entirely new flags of your own.
+# Run `crec presets` to see everything that resolved, and `crec presets --edit`
+# to open your file.
+#
+# Explicit command-line flags always win over presets, so `crec --discord -s 8`
+# gives you 8 MB.
+#
+# Recognised keys are the engine primitives listed by `crec presets --keys`.
+
+# --- defaults applied to every run; override anything here -------------------
+[defaults]
+description = "Applied to every run"
+
+# --- size targets -----------------------------------------------------------
+[discord]
+description = "Fit under Discord's free-tier upload limit"
+target_mb = 10
+
+[discord-nitro]
+description = "Fit under Discord Nitro's upload limit"
+target_mb = 500
+
+[whatsapp]
+description = "Fit under WhatsApp's video limit"
+target_mb = 16
+
+[telegram]
+description = "Fit under Telegram's non-premium limit"
+target_mb = 2000
+
+# --- formats ----------------------------------------------------------------
+[gif]
+description = "Convert to an optimised GIF (palette-generated, no audio)"
+format = "gif"
+fps = 15
+scale = 480
+no_audio = true
+
+[mp3]
+description = "Audio only, as mp3"
+format = "mp3"
+audio_only = true
+
+[music]
+description = "Best-quality audio with thumbnail cover art"
+audio_only = true
+format = "mp3"
+audio_quality = 320
+thumbnail = true
+
+# --- convenience ------------------------------------------------------------
+[small]
+description = "720p - good enough, downloads fast"
+quality = 720
+
+[hd]
+description = "1080p"
+quality = 1080
