@@ -958,3 +958,91 @@ def test_icons_ship_with_the_package() -> None:
     for name in ("crec.ico", "crec-busy.ico", "crec-error.ico"):
         data = _asset(name).read_bytes()
         assert data[:4] == b"\0\0\1\0", f"{name} is not an .ico"
+
+
+# --------------------------------------------------------------------------- #
+# self-update
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize(
+    ("candidate", "current", "expected"),
+    [("2.1.0", "2.0.0", True), ("v2.10.0", "2.9.9", True), ("2.0.0", "2.0.0", False), ("1.9", "2.0.0", False)],
+)
+def test_newer_compares_versions_as_numbers(candidate: str, current: str, expected: bool) -> None:
+    from crec.selfupdate import newer
+
+    assert newer(candidate, current) is expected
+
+
+def test_pip_installs_are_told_to_use_pip() -> None:
+    """Only the frozen Windows app replaces itself; pip owns everything else."""
+    from crec import selfupdate
+
+    started, message = selfupdate.update_crec()
+    assert started is False and "pip" in message
+
+
+def test_update_refuses_a_release_without_a_checksum(monkeypatch) -> None:
+    from crec import selfupdate
+
+    monkeypatch.setattr(selfupdate, "is_installed_app", lambda: True)
+    monkeypatch.setattr(
+        selfupdate, "latest_release",
+        lambda: selfupdate.Release("99.0.0", "https://example.invalid/x.zip", None),
+    )
+    started, message = selfupdate.update_crec()
+    assert started is False and "checksum" in message
+
+
+def test_update_refuses_a_download_that_fails_its_checksum(monkeypatch, tmp_path) -> None:
+    from crec import selfupdate
+
+    source = tmp_path / "release"
+    source.mkdir()
+    (source / "version.txt").write_text("99.0.0", encoding="utf-8")
+    (source / selfupdate.ASSET).write_bytes(b"not the real zip")
+    (source / f"{selfupdate.ASSET}.sha256").write_text("0" * 64 + "  x\n", encoding="utf-8")
+    monkeypatch.setenv("CREC_UPDATE_SOURCE", str(source))
+    monkeypatch.setattr(selfupdate, "is_installed_app", lambda: True)
+    monkeypatch.setattr(selfupdate.paths, "data_dir", lambda: tmp_path / "data")
+    launched: list = []
+    monkeypatch.setattr(selfupdate, "_launch_helper", lambda *a, **k: launched.append(a))
+
+    with pytest.raises(CrecError, match="checksum"):
+        selfupdate.update_crec()
+    assert launched == [], "nothing may be swapped in after a failed checksum"
+
+
+def test_uninstall_and_update_are_reserved_names() -> None:
+    assert {"uninstall", "update", "tray"} <= presets.RESERVED
+
+
+def test_uninstall_keeps_presets_even_inside_the_data_folder(tmp_path) -> None:
+    """The prompt promises to keep presets; that must hold even when the config
+    folder and data folder are the same place."""
+    from crec.selfupdate import _remove_data
+
+    data = tmp_path / "crec"
+    (data / "bin").mkdir(parents=True)
+    (data / "bin" / "ffmpeg.exe").write_bytes(b"x")
+    (data / "state.json").write_text("{}", encoding="utf-8")
+    presets_file = data / "presets.toml"
+    presets_file.write_text("[mine]\n", encoding="utf-8")
+
+    _remove_data(data, keep=presets_file)
+    assert [p.name for p in data.iterdir()] == ["presets.toml"]
+
+    separate = tmp_path / "other"
+    separate.mkdir()
+    _remove_data(separate, keep=presets_file)
+    assert not separate.exists() and presets_file.exists()
+
+
+def test_download_progress_is_one_line_when_not_a_terminal(monkeypatch, tmp_path, capsys) -> None:
+    from crec import deps
+
+    source = tmp_path / "blob.bin"
+    source.write_bytes(b"x" * 600_000)
+    deps._download(source.as_uri(), tmp_path / "copy.bin", label="blob", quiet=False)
+    assert capsys.readouterr().err == "fetching blob...\n"
+    assert (tmp_path / "copy.bin").read_bytes() == source.read_bytes()

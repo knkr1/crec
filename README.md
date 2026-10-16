@@ -514,13 +514,22 @@ you can just run `crec update`.
 ## Commands
 
 ```bash
-crec update                 # update yt-dlp now
+crec update                 # update yt-dlp, and crec itself
 crec doctor                 # what's installed and where
 crec doctor --fix           # install whatever's missing
 crec presets                # list every preset
 crec presets --edit         # open your presets file
 crec presets --keys         # everything a preset can set
+crec tray                   # hotkeys and a tray icon (Windows)
+crec uninstall              # remove crec; keeps your downloads and presets
 ```
+
+`crec update` on the Windows app downloads the new version, checks it against the
+published SHA256 (no checksum, no update), and swaps it in a few seconds after crec
+exits, since a running program can't replace its own files. The swap is two folder
+renames, so if anything is still using the old version it simply stays put. crec also
+mentions new releases once a day, and the tray offers them with a click. If you installed
+crec with pip, it's pip's job: `pipx upgrade crec`.
 
 ---
 

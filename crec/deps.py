@@ -179,6 +179,9 @@ def update_ytdlp(*, quiet: bool = False) -> tuple[bool, str]:
         shutil.rmtree(staging, ignore_errors=True)
 
     record_update_check()
+    if _normalise(current) == _normalise(target):
+        # Same release, but now as crec's own copy that future updates replace.
+        return True, f"yt-dlp {target} is now kept up to date by crec."
     return True, f"yt-dlp updated: {current} -> {target}"
 
 
@@ -304,6 +307,11 @@ def fetch_ffmpeg(*, quiet: bool = False) -> None:
 # --------------------------------------------------------------------------- #
 
 def _download(url: str, destination: Path, *, label: str, quiet: bool) -> None:
+    # A redrawn bar only makes sense in a terminal; piped or logged, each redraw
+    # becomes its own line. Say it once instead.
+    live = not quiet and sys.stderr.isatty()
+    if not quiet and not live:
+        sys.stderr.write(f"fetching {label}...\n")
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -313,9 +321,9 @@ def _download(url: str, destination: Path, *, label: str, quiet: bool) -> None:
                 while chunk := response.read(256 * 1024):
                     handle.write(chunk)
                     done += len(chunk)
-                    if not quiet:
+                    if live:
                         _progress(label, done, total)
-        if not quiet:
+        if live:
             sys.stderr.write("\r\033[Kfetched " + label + "\n")
             sys.stderr.flush()
     except urllib.error.URLError as exc:

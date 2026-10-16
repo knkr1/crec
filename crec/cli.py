@@ -22,7 +22,7 @@ from .errors import CrecError
 from .options import PRIMITIVES, Options
 
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-SUBCOMMANDS = {"update", "doctor", "presets", "tray"}
+SUBCOMMANDS = {"update", "doctor", "presets", "tray", "uninstall"}
 
 
 # --------------------------------------------------------------------------- #
@@ -55,10 +55,11 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
             "  crec ./clips --discord      every video in a folder\n"
             "\n"
             "commands:\n"
-            "  crec update                 update yt-dlp now\n"
+            "  crec update                 update yt-dlp and crec now\n"
             "  crec doctor [--fix]         check (and repair) the setup\n"
             "  crec presets [--edit]       list presets / open your presets file\n"
             "  crec tray                   hotkeys + tray icon, no terminal needed (Windows)\n"
+            "  crec uninstall              remove crec (keeps your downloads and presets)\n"
         ),
     )
 
@@ -557,9 +558,16 @@ def _local_conversions(current: Path, options: Options, say) -> Path:
 # --------------------------------------------------------------------------- #
 
 def cmd_update() -> int:
+    """Update yt-dlp, then crec itself (the installed app swaps in after exit)."""
+    from . import selfupdate  # noqa: PLC0415
+
     changed, message = deps.update_ytdlp()
     print(message)
-    return 0 if changed or "already current" in message else 1
+    ytdlp_ok = changed or "already current" in message
+
+    _, message = selfupdate.update_crec()
+    print(message)
+    return 0 if ytdlp_ok else 1
 
 
 def cmd_presets(argv: list[str]) -> int:
@@ -636,6 +644,10 @@ def run(argv: list[str]) -> int:
             return cmd_presets(rest)
         if command == "doctor":
             return deps.doctor(fix="--fix" in rest)
+        if command == "uninstall":
+            from .selfupdate import uninstall  # noqa: PLC0415
+
+            return uninstall(assume_yes="--yes" in rest or "-y" in rest)
         if command == "tray":
             from .tray import cmd_tray  # noqa: PLC0415 - Windows-only, keep startup lean
 
@@ -763,7 +775,7 @@ def job(
 
 
 class _UpdateCheck:
-    """Asks PyPI for the latest yt-dlp while the download runs.
+    """Asks for the latest yt-dlp (and crec) while the download runs.
 
     It used to run after the download, which added up to a 10s network
     timeout to the end of a run once a day. Now it overlaps the download, and
@@ -774,6 +786,7 @@ class _UpdateCheck:
         import threading
 
         self.latest: str | None = None
+        self.latest_crec: str | None = None
         self._thread: threading.Thread | None = None
         if deps.should_check_update():
             deps.record_update_check()
@@ -781,12 +794,23 @@ class _UpdateCheck:
             self._thread.start()
 
     def _run(self) -> None:
+        from . import selfupdate  # noqa: PLC0415
+
         self.latest = deps.latest_ytdlp_version()
+        if selfupdate.is_installed_app():
+            release = selfupdate.latest_release(timeout=5)
+            if release and selfupdate.newer(release.version):
+                self.latest_crec = release.version
 
     def report(self) -> None:
         if self._thread is None:
             return
         self._thread.join(timeout=0.5)
+        if self.latest_crec:
+            print(
+                f"\ncrec {self.latest_crec} is out (you have {__version__}). Run: crec update",
+                file=sys.stderr,
+            )
         if not self.latest:
             return
         current = deps.ytdlp_version()
