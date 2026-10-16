@@ -1217,3 +1217,75 @@ def test_doctor_reports_impersonation() -> None:
     from crec.deps import _impersonation
 
     assert _impersonation().startswith(("available", "MISSING"))
+
+
+# --------------------------------------------------------------------------- #
+# JavaScript runtime for YouTube
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def runtimes(monkeypatch, tmp_path):
+    """No runtimes anywhere unless a test adds one."""
+    import subprocess as sp
+    from crec import deps
+
+    monkeypatch.setattr(deps.paths, "bin_dir", lambda: tmp_path / "bin")
+    found: dict[str, str] = {}
+    versions: dict[str, str] = {}
+    monkeypatch.setattr(deps.shutil, "which", lambda name: found.get(name))
+    monkeypatch.setattr(
+        deps, "run_quiet",
+        lambda args: sp.CompletedProcess(args, 0, versions.get(Path(args[0]).name, ""), ""),
+    )
+    fetched: list[bool] = []
+
+    def fake_fetch(**_):
+        fetched.append(True)
+        managed = tmp_path / "bin" / deps._exe("deno")
+        managed.parent.mkdir(parents=True, exist_ok=True)
+        managed.write_bytes(b"")
+        return managed
+
+    monkeypatch.setattr(deps, "fetch_deno", fake_fetch)
+    return deps, found, versions, fetched, tmp_path
+
+
+def test_a_recent_node_is_used_instead_of_downloading(runtimes) -> None:
+    deps, found, versions, fetched, _ = runtimes
+    found["node"] = "/usr/bin/node"
+    versions["node"] = "v22.11.0\n"
+    assert deps.js_runtimes(fetch=True) == {"node": {"path": str(Path("/usr/bin/node"))}}
+    assert fetched == []
+
+
+def test_an_old_node_is_not_good_enough(runtimes) -> None:
+    deps, found, versions, fetched, _ = runtimes
+    found["node"] = "/usr/bin/node"
+    versions["node"] = "v18.19.0\n"
+    assert list(deps.js_runtimes(fetch=True)) == ["deno"]
+    assert fetched == [True]
+
+
+def test_crecs_own_deno_wins(runtimes) -> None:
+    deps, found, versions, fetched, tmp = runtimes
+    (tmp / "bin").mkdir()
+    (tmp / "bin" / deps._exe("deno")).write_bytes(b"")
+    found["node"] = "/usr/bin/node"
+    versions["node"] = "v24.0.0\n"
+    assert deps.js_runtimes(fetch=False)["deno"]["path"].startswith(str(tmp))
+
+
+def test_nothing_is_downloaded_unless_asked(runtimes) -> None:
+    deps, _, _, fetched, _ = runtimes
+    assert deps.js_runtimes(fetch=False) is None and fetched == []
+
+
+def test_only_youtube_triggers_the_download(runtimes) -> None:
+    from crec import download
+
+    _, _, _, fetched, _ = runtimes
+    opts: dict = {}
+    download._add_js_runtime(opts, "https://www.tiktok.com/@a/video/1")
+    assert "js_runtimes" not in opts and fetched == []
+    download._add_js_runtime(opts, "https://youtu.be/dQw4w9WgXcQ")
+    assert "deno" in opts["js_runtimes"] and fetched == [True]

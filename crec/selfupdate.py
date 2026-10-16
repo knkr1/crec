@@ -268,6 +268,12 @@ def _remove_data(data: Path, *, keep: Path) -> None:
             child.unlink(missing_ok=True)
 
 
+def start_menu_shortcut() -> Path:
+    """Where install.ps1 puts the "crec" Start menu entry."""
+    programs = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return programs / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "crec.lnk"
+
+
 def uninstall(*, assume_yes: bool) -> int:
     if not is_installed_app():
         print("This crec was installed with pip. Remove it with: pipx uninstall crec "
@@ -279,7 +285,7 @@ def uninstall(*, assume_yes: bool) -> int:
     print("This removes:")
     print(f"  crec itself         {target}")
     print(f"  its ffmpeg, yt-dlp  {data}")
-    print("  the hotkeys and start-with-Windows entry")
+    print("  the hotkeys, the Start menu entry and start-with-Windows")
     print("It keeps your downloads and presets:")
     print(f"  {paths.downloads_dir()}")
     print(f"  {paths.user_presets_file()}")
@@ -297,6 +303,7 @@ def uninstall(*, assume_yes: bool) -> int:
     if _tray_running():
         cmd_tray(["--stop"])
     set_startup(False)
+    start_menu_shortcut().unlink(missing_ok=True)
     on_path = _remove_from_user_path(target)
     _remove_data(data, keep=paths.user_presets_file())
     _launch_helper(_REMOVE_SCRIPT, Dir=str(target))

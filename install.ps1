@@ -181,8 +181,39 @@ if (-not $Custom -and $resolved -and ($resolved -ne $Target)) {
     }
 }
 
-# --- hotkeys -------------------------------------------------------------------
+# --- one-time downloads, now rather than on the first hotkey press -------------
+# ffmpeg (~80 MB) and a JavaScript runtime for YouTube (~40 MB, skipped if a
+# recent Node or deno is already installed). Fetched lazily otherwise - fine in a
+# terminal with a progress bar, but from the tray the first hotkey press would
+# just sit "busy" for a minute and look broken.
+Write-Host ""
+Info "Getting ffmpeg and YouTube support (one-time, up to ~120 MB)..."
+& $Target doctor --fix > $null
+if ($LASTEXITCODE -eq 0) { Good "ffmpeg and YouTube support are ready." }
+else { Warn "Could not fetch everything now; crec will try again the first time it needs it." }
+
+# --- Start menu ------------------------------------------------------------------
+# So the tray can be started (again) without a terminal: after declining the
+# hotkeys below, after quitting the tray, or just to find crec at all.
 $hasTray = Test-Path (Join-Path $Dir "crecw.exe")
+if ($hasTray -and -not $Custom) {
+    try {
+        $programs = [Environment]::GetFolderPath("Programs")
+        $shell = New-Object -ComObject WScript.Shell
+        $link = $shell.CreateShortcut((Join-Path $programs "crec.lnk"))
+        $link.TargetPath = Join-Path $Dir "crecw.exe"
+        $link.Arguments = "tray --run"
+        $link.WorkingDirectory = $Dir
+        $link.IconLocation = "$(Join-Path $Dir 'crecw.exe'),0"
+        $link.Description = "crec - copy a link, press a hotkey, paste the video"
+        $link.Save()
+        Info "Added crec to the Start menu."
+    } catch {
+        Warn "Could not add a Start menu entry: $($_.Exception.Message)"
+    }
+}
+
+# --- hotkeys -------------------------------------------------------------------
 $trayStarted = $false
 if ($hasTray -and $trayWasRunning) {
     & $Target tray *> $null
@@ -201,6 +232,8 @@ if ($hasTray -and $trayWasRunning) {
         & $Target tray *> $null
         $trayStarted = $true
         Good "Hotkeys are on - look for the crec icon by the clock."
+    } else {
+        Info "No problem. To turn them on later, open crec from the Start menu."
     }
 }
 

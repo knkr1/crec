@@ -303,6 +303,110 @@ def fetch_ffmpeg(*, quiet: bool = False) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# a JavaScript runtime, for YouTube
+# --------------------------------------------------------------------------- #
+#
+# YouTube hides its stream URLs behind JavaScript challenges, and yt-dlp now
+# solves them by running YouTube's player code in a real JS runtime. Without one
+# it falls back to a deprecated path that warns today and will stop working -
+# and since yt-dlp updates itself, that day could arrive without a crec release.
+#
+# deno over the smaller quickjs-ng: measured on real videos, quickjs added ~6s
+# to every YouTube download (its results are not cached), deno and Node ~0s.
+# A 40 MB one-time download beats six seconds every time. Anyone who already
+# has a recent Node gets to skip the download entirely.
+
+_DENO_MIN = (2, 3, 0)
+_NODE_MIN = (22, 0, 0)
+
+
+def _deno_asset() -> str | None:
+    import platform
+
+    arm = platform.machine().lower() in {"arm64", "aarch64"}
+    if sys.platform == "win32":
+        return "deno-x86_64-pc-windows-msvc.zip"  # runs under emulation on ARM too
+    if sys.platform == "darwin":
+        return f"deno-{'aarch64' if arm else 'x86_64'}-apple-darwin.zip"
+    if sys.platform.startswith("linux"):
+        return f"deno-{'aarch64' if arm else 'x86_64'}-unknown-linux-gnu.zip"
+    return None
+
+
+def _version_of(executable: str | Path, pattern: str) -> tuple[int, ...] | None:
+    try:
+        result = run_quiet([str(executable), "--version"])
+    except OSError:
+        return None
+    match = re.search(pattern, result.stdout or "", re.MULTILINE)
+    return _normalise(match.group(1)) if match else None
+
+
+def find_js_runtime() -> tuple[str, Path] | None:
+    """``(name, path)`` of a usable runtime, without downloading anything."""
+    managed = paths.bin_dir() / _exe("deno")
+    if managed.is_file():
+        return "deno", managed
+    for name, pattern, minimum in (
+        ("deno", r"^deno (\S+)", _DENO_MIN),
+        ("node", r"^v(\S+)", _NODE_MIN),
+    ):
+        found = shutil.which(name)
+        if found:
+            version = _version_of(found, pattern)
+            if version and version >= minimum:
+                return name, Path(found)
+    return None
+
+
+def fetch_deno(*, quiet: bool = False) -> Path:
+    asset = _deno_asset()
+    if asset is None:
+        raise MissingDependency(f"crec cannot auto-install deno on {sys.platform}.")
+    target = paths.ensure(paths.bin_dir())
+    staging = target.parent / "deno.incoming"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        archive = staging / asset
+        _download(
+            f"https://github.com/denoland/deno/releases/latest/download/{asset}",
+            archive, label="deno for YouTube (one-time, ~40 MB)", quiet=quiet,
+        )
+        with zipfile.ZipFile(archive) as zf:
+            zf.extract(_exe("deno"), staging)
+        destination = target / _exe("deno")
+        destination.unlink(missing_ok=True)
+        shutil.move(str(staging / _exe("deno")), str(destination))
+        if sys.platform != "win32":
+            destination.chmod(0o755)
+        return destination
+    except (KeyError, zipfile.BadZipFile) as exc:
+        raise MissingDependency(f"The deno download was not what crec expected: {exc}") from exc
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def js_runtimes(*, fetch: bool) -> dict | None:
+    """yt-dlp's ``js_runtimes`` option, or None to leave yt-dlp's default.
+
+    ``fetch`` downloads deno when nothing usable exists - pass it only for
+    YouTube, so a TikTok-only user never downloads a runtime they don't need.
+    A failed download must not fail the video: yt-dlp still has its fallback.
+    """
+    found = find_js_runtime()
+    if found is None and fetch:
+        try:
+            found = ("deno", fetch_deno())
+        except MissingDependency:
+            return None
+    if found is None:
+        return None
+    name, path = found
+    return {name: {"path": str(path)}}
+
+
+# --------------------------------------------------------------------------- #
 # shared
 # --------------------------------------------------------------------------- #
 
@@ -366,6 +470,13 @@ def doctor(*, fix: bool) -> int:
             print(f"{name:<11} MISSING")
 
     print(f"impersonate {_impersonation()}")
+    runtime = find_js_runtime()
+    if runtime:
+        managed = runtime[1].parent == paths.bin_dir()
+        print(f"javascript  {runtime[0]} {'(managed)' if managed else runtime[1]}")
+    else:
+        ok = False
+        print("javascript  MISSING - YouTube needs it; fetched on first YouTube download")
     print(f"clipboard   {clipboard.describe()}")
     print(f"downloads   {paths.downloads_dir()}")
     print(f"presets     {paths.user_presets_file()}")
@@ -374,6 +485,8 @@ def doctor(*, fix: bool) -> int:
         print()
         if not (ffmpeg and ffprobe):
             fetch_ffmpeg()
+        if runtime is None:
+            fetch_deno()
         if version in {"unknown", "unavailable"}:
             _, message = update_ytdlp()
             print(message)
