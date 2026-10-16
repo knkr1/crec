@@ -34,4 +34,4 @@ crec = "crec.cli:main"
 include = ["crec*"]
 
 [tool.setuptools.package-data]
-crec = ["presets.toml"]
+crec = ["presets.toml", "assets/*.ico"]

@@ -16,10 +16,11 @@ a = Analysis(
     ["entry.py"],
     pathex=["."],
     binaries=[],
-    datas=[("crec/presets.toml", "crec")],
+    datas=[("crec/presets.toml", "crec"), ("crec/assets/*.ico", "crec/assets")],
     hiddenimports=[
         "crec",
         "crec.cli",
+        "crec.tray",  # imported lazily by `crec tray`
         # yt-dlp's optional companions. Present -> more sites work; the bundle
         # grows by a couple of MB, which is a trade worth making.
         "Cryptodome",
@@ -64,4 +65,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="crec/assets/crec.ico",
 )

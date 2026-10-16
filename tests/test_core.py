@@ -846,3 +846,111 @@ def test_long_output_folder_is_not_trimmed_into_the_filename(tmp_path) -> None:
     with yt_dlp.YoutubeDL(opts) as ydl:
         name = ydl.prepare_filename({"id": "x", "title": "Me at the zoo", "ext": "webm"})
     assert Path(name) == deep / "Me at the zoo.webm"
+
+
+# --------------------------------------------------------------------------- #
+# tray hotkeys (the pure parts - the Win32 side is exercised by hand)
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize(
+    ("combo", "expected"),
+    [
+        ("ctrl+shift+alt+d", (0x2 | 0x4 | 0x1, ord("D"))),
+        ("Win+Alt+9", (0x8 | 0x1, ord("9"))),
+        ("control + f12", (0x2, 0x7B)),
+    ],
+)
+def test_parse_combo(combo: str, expected: tuple[int, int]) -> None:
+    from crec.tray import parse_combo
+
+    assert parse_combo(combo) == expected
+
+
+@pytest.mark.parametrize(
+    ("combo", "complaint"),
+    [("d", "at least one"), ("hyper+d", "not a modifier"), ("ctrl+space", "not a key"), ("", "empty")],
+)
+def test_parse_combo_rejects(combo: str, complaint: str) -> None:
+    from crec.tray import parse_combo
+
+    with pytest.raises(ValueError, match=complaint):
+        parse_combo(combo)
+
+
+def test_describe_orders_modifiers_conventionally() -> None:
+    from crec.tray import describe
+
+    assert describe("alt+shift+ctrl+d") == "Ctrl+Shift+Alt+D"
+    assert describe("win+control+f5") == "Ctrl+Win+F5"
+
+
+def test_builtin_hotkeys_are_valid_and_not_presets() -> None:
+    from crec.tray import load_hotkeys
+
+    hotkeys, warnings = load_hotkeys()
+    assert warnings == []
+    assert {h.flags for h in hotkeys} == {"", "--discord"}
+    assert "hotkeys" not in presets.load().presets, "[hotkeys] must not become --hotkeys"
+
+
+def test_user_hotkeys_replace_the_builtin_table(monkeypatch, tmp_path) -> None:
+    from crec.tray import load_hotkeys
+
+    user_file = tmp_path / "presets.toml"
+    user_file.write_text(
+        '[hotkeys]\n'
+        '"ctrl+alt+g" = "--gif"\n'
+        '"ctrl+alt+x" = "--no-such-flag"\n'
+        '"ctrl+alt+v" = "clip.mp4 --discord"\n'
+        '"alt+ctrl+g" = "-a"\n'
+        '"nonsense" = ""\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(presets.paths, "user_presets_file", lambda: user_file)
+
+    hotkeys, warnings = load_hotkeys()
+    assert [(h.combo, h.flags) for h in hotkeys] == [("ctrl+alt+g", "--gif")]
+    joined = " | ".join(warnings)
+    assert "not valid crec flags" in joined
+    assert "work on the clipboard" in joined
+    assert "listed twice" in joined
+    assert "at least one" in joined
+
+
+def test_hotkey_does_not_silently_redo_the_last_run(desk) -> None:
+    """Pressing the hotkey with nothing new copied must not re-download the
+    previous video - the CLI's fallback would be a surprise from a hotkey."""
+    board, cli, state, tmp = desk
+    state.remember("https://example.com/v/9")
+    board["text"] = "just some text"
+
+    assert cli.find_source([], prefer_last=False).url == "https://example.com/v/9"
+    with pytest.raises(CrecError, match="Nothing to work on"):
+        cli.find_source([], prefer_last=False, fall_back_to_last=False)
+
+
+def test_hotkey_still_treats_own_output_as_same_again(desk) -> None:
+    board, cli, state, tmp = desk
+    output = _video(tmp, "out.mp4")
+    state.remember("https://example.com/v/10", [output])
+    board["files"] = [output]
+    source = cli.find_source([], prefer_last=False, fall_back_to_last=False)
+    assert source.url == "https://example.com/v/10"
+
+
+def test_progress_listener_hears_stages_without_a_terminal() -> None:
+    from crec.download import Progress
+
+    heard: list[str] = []
+    progress = Progress(enabled=False, listener=heard.append)
+    progress.stage("compressing")
+    progress.hook({"status": "downloading", "downloaded_bytes": 50, "total_bytes": 200})
+    assert heard == ["compressing", "downloading 25%"]
+
+
+def test_icons_ship_with_the_package() -> None:
+    from crec.tray import _asset
+
+    for name in ("crec.ico", "crec-busy.ico", "crec-error.ico"):
+        data = _asset(name).read_bytes()
+        assert data[:4] == b"\0\0\1\0", f"{name} is not an .ico"
