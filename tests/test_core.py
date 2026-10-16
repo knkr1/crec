@@ -835,11 +835,15 @@ def test_cookie_failure_is_found_inside_downloaderror() -> None:
     assert not _caused_by_cookie_load(yt_dlp.utils.DownloadError("other"), yt_dlp)
 
 
-def test_long_output_folder_is_not_trimmed_into_the_filename(tmp_path) -> None:
+def test_long_output_folder_is_not_trimmed_into_the_filename(tmp_path, monkeypatch) -> None:
     """Regression: trim_file_name applied to the whole path, so a deep -o folder
     sent "Me at the zoo.webm" to <a parent folder>/c.webm."""
     import yt_dlp
+    from crec import download
     from crec.download import Progress, build_ydl_opts
+
+    # The suite stays ffmpeg-free: CI's Linux and macOS runners don't have it.
+    monkeypatch.setattr(download.deps, "ffmpeg_path", lambda **_: Path("ffmpeg"))
 
     deep = tmp_path.joinpath(*["a-fairly-long-folder-name"] * 6)
     opts = build_ydl_opts(Options(), deep, Progress(enabled=False))
