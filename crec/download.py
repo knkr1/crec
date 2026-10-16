@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,9 +58,14 @@ _CHROMIUM = {"chrome", "chromium", "edge", "brave", "opera", "vivaldi", "whale"}
 
 @dataclass
 class Progress:
-    """A single rewritten status line. Quiet when not attached to a terminal."""
+    """A single rewritten status line. Quiet when not attached to a terminal.
+
+    ``listener``, if set, hears a short plain-text status for every update
+    regardless - that is how the tray icon's tooltip follows along.
+    """
 
     enabled: bool = True
+    listener: Callable[[str], None] | None = field(default=None, repr=False)
     _last: float = field(default=0.0, repr=False)
     _label: str = field(default="", repr=False)
 
@@ -69,11 +75,13 @@ class Progress:
 
     def stage(self, label: str) -> None:
         self._label = label
+        if self.listener:
+            self.listener(label)
         if self.enabled:
             self._write(f"{label}...")
 
     def hook(self, status: dict) -> None:
-        if not self.enabled:
+        if not (self.enabled or self.listener):
             return
         state = status.get("status")
         if state == "downloading":
@@ -85,6 +93,10 @@ class Progress:
             done = status.get("downloaded_bytes") or 0
             speed = status.get("speed") or 0
             pct = (done * 100 / total) if total else 0
+            if self.listener:
+                self.listener(f"downloading {pct:.0f}%" if total else "downloading")
+            if not self.enabled:
+                return
             bar_width = 24
             filled = int(pct / 100 * bar_width)
             bar = "#" * filled + "." * (bar_width - filled)
@@ -93,7 +105,10 @@ class Progress:
             eta_text = f" ETA {int(eta) // 60:d}:{int(eta) % 60:02d}" if eta else ""
             self._write(f"downloading [{bar}] {pct:5.1f}%  {rate}{eta_text}")
         elif state == "finished":
-            self._write("downloaded, processing...")
+            if self.listener:
+                self.listener("processing")
+            if self.enabled:
+                self._write("downloaded, processing...")
 
     def _write(self, text: str) -> None:
         sys.stderr.write(f"\r\033[K{text}")

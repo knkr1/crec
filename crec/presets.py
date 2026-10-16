@@ -50,7 +50,10 @@ BUILTIN_FILE = _builtin_file()
 # Names that are commands rather than flags, so a preset can never shadow one.
 # Flag collisions are detected against the real parser in crec.cli instead of
 # being listed here - a hand-maintained list drifts the moment someone adds a flag.
-RESERVED = {"update", "doctor", "presets"}
+RESERVED = {"update", "doctor", "presets", "tray"}
+
+# Tables that configure something other than a preset.
+HOTKEYS_TABLE = "hotkeys"
 
 
 @dataclass
@@ -97,6 +100,8 @@ def load() -> PresetSet:
     for source, path in (("built-in", BUILTIN_FILE), ("user", paths.user_presets_file())):
         raw = _read(path)
         for name, values in raw.items():
+            if name == HOTKEYS_TABLE:
+                continue
             if not isinstance(values, dict):
                 warnings.append(
                     f"{path.name}: '{name}' is not a table - "
@@ -136,6 +141,30 @@ def load() -> PresetSet:
     return PresetSet(presets=presets, defaults=defaults, warnings=warnings)
 
 
+def load_hotkeys() -> tuple[dict[str, str], list[str]]:
+    """``{combo: crec flags}`` for the tray, plus warnings.
+
+    The user's ``[hotkeys]`` replaces the built-in table outright rather than
+    merging: if you rebind the shortcuts, the old ones shouldn't linger.
+    """
+    warnings: list[str] = []
+    chosen: dict[str, str] = {}
+    for path in (BUILTIN_FILE, paths.user_presets_file()):
+        table = _read(path).get(HOTKEYS_TABLE)
+        if table is None:
+            continue
+        if not isinstance(table, dict):
+            warnings.append(f"{path.name}: [hotkeys] must be a table")
+            continue
+        chosen = {}
+        for combo, flags in table.items():
+            if not isinstance(flags, str):
+                warnings.append(f"{path.name}: hotkey '{combo}' should map to a string of flags")
+                continue
+            chosen[combo] = flags
+    return chosen, warnings
+
+
 def write_starter_file(path: Path) -> bool:
     """Create a commented starter presets file. False if one already exists."""
     if path.exists():
@@ -155,7 +184,13 @@ def write_starter_file(path: Path) -> bool:
         "# description = \"720p, under 8 MB, muted\"\n"
         "# quality = 720\n"
         "# target_mb = 8\n"
-        "# no_audio = true\n",
+        "# no_audio = true\n"
+        "\n"
+        "# Global shortcuts for `crec tray` (this replaces the built-in ones):\n"
+        "# [hotkeys]\n"
+        "# \"ctrl+shift+alt+c\" = \"\"\n"
+        "# \"ctrl+shift+alt+d\" = \"--discord\"\n"
+        "# \"ctrl+shift+alt+g\" = \"--gif\"\n",
         encoding="utf-8",
     )
     return True

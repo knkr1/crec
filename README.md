@@ -20,6 +20,10 @@ crec -a                     # just the audio, reusing the last URL
 crec --gif -c 1:00-1:05     # a five-second gif
 ```
 
+Or skip the terminal entirely: run `crec tray` once, then copy a link and press
+**Ctrl+Shift+Alt+C**, or **Ctrl+Shift+Alt+D** to shrink it for Discord. See
+[Hotkeys and the tray](#hotkeys-and-the-tray).
+
 It works on files you already have, too. Copy a video in Explorer (Ctrl+C on the file),
 then run `crec --discord`, and the shrunk version is on your clipboard.
 
@@ -34,6 +38,7 @@ then run `crec --discord`, and the shrunk version is on your clipboard.
 - [How the size targeting works](#how-the-size-targeting-works)
 - [How trimming works](#how-trimming-works)
 - [Files you already have](#files-you-already-have)
+- [Hotkeys and the tray](#hotkeys-and-the-tray)
 - [Logins and cookies](#logins-and-cookies)
 - [The clipboard](#the-clipboard)
 - [Keeping yt-dlp current](#keeping-yt-dlp-current)
@@ -374,6 +379,52 @@ clipboard, then whatever the last run worked on.
 Your original is never touched. The result lands in `~/crec` as `clip-crec.mp4` and goes
 on your clipboard like any other download. Running `crec` on a file with no flags is an
 error rather than a pointless copy, since there's nothing to do to it.
+
+---
+
+## Hotkeys and the tray
+
+*Windows only, for now.*
+
+```bash
+crec tray                  # start it; an icon appears by the clock
+crec tray --startup on     # and start it every time you log in
+crec tray --stop           # quit (or use the icon's menu)
+```
+
+Then the whole workflow is: copy a link (or a video file in Explorer), press a hotkey,
+paste. The icon turns amber while crec works and the tooltip shows how far along it is.
+A notification says when the file is on your clipboard, or why it isn't. Click the
+notification to see the file in Explorer.
+
+The default hotkeys:
+
+| Hotkey | Runs |
+|---|---|
+| Ctrl+Shift+Alt+C | `crec` |
+| Ctrl+Shift+Alt+D | `crec --discord` |
+
+They use three modifiers on purpose. Global hotkeys take the combination away from every
+other app, and Ctrl+Alt alone is AltGr on many keyboards, where it types characters.
+
+To change them, open **Edit presets and hotkeys** from the icon's menu (or run
+`crec presets --edit`) and add a `[hotkeys]` table. It replaces the defaults, and each
+entry is a key combination and the flags to run:
+
+```toml
+[hotkeys]
+"ctrl+shift+alt+c" = ""
+"ctrl+shift+alt+d" = "--discord"
+"ctrl+shift+alt+g" = "--gif -c 0:00-0:05"
+"ctrl+shift+alt+a" = "-a"
+```
+
+Then choose **Reload hotkeys** from the menu. If another app has already taken a
+combination, crec tells you which one instead of silently not working.
+
+A hotkey only works on what you copied. Unlike typing `crec`, pressing one with nothing
+new on the clipboard won't quietly re-download whatever you grabbed last. What happens
+each time is written to `tray.log` (**Show log** in the menu).
 
 ---
 

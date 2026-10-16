@@ -22,7 +22,7 @@ from .errors import CrecError
 from .options import PRIMITIVES, Options
 
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-SUBCOMMANDS = {"update", "doctor", "presets"}
+SUBCOMMANDS = {"update", "doctor", "presets", "tray"}
 
 
 # --------------------------------------------------------------------------- #
@@ -58,6 +58,7 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
             "  crec update                 update yt-dlp now\n"
             "  crec doctor [--fix]         check (and repair) the setup\n"
             "  crec presets [--edit]       list presets / open your presets file\n"
+            "  crec tray                   hotkeys + tray icon, no terminal needed (Windows)\n"
         ),
     )
 
@@ -249,19 +250,28 @@ def _same_files(left: list[Path], right: list[Path]) -> bool:
     return bool(left) and key(left) == key(right)
 
 
-def find_source(given: list[str], *, prefer_last: bool) -> Source:
-    """Pick what to work on: arguments > a copied file > a copied URL > last run."""
+def find_source(
+    given: list[str], *, prefer_last: bool, fall_back_to_last: bool = True
+) -> Source:
+    """Pick what to work on: arguments > a copied file > a copied URL > last run.
+
+    ``fall_back_to_last=False`` is for the hotkey: pressing it with nothing new
+    copied must not quietly re-download whatever ran last. crec's own output on
+    the clipboard still counts as "the same thing again" there.
+    """
     if given:
         return _from_arguments(given)
 
     if not prefer_last:
         copied = [p for p in clipboard.read_files() if p.suffix.lower() in MEDIA_SUFFIXES]
         if copied:
-            # Our own output still on the clipboard means "the same thing again":
-            # `crec` then `crec -a` should re-fetch the audio, not dig it out of
-            # the already-processed file. Fall through to the last run instead.
             if not _same_files(copied, state.last_files()):
                 return Source(files=copied, where="clipboard")
+            # Our own output still on the clipboard means "the same thing again":
+            # `crec` then `crec -a` should re-fetch the audio, not dig it out of
+            # the already-processed file.
+            remembered = _remembered()
+            return remembered or Source(files=copied, where="clipboard")
         else:
             text = clipboard.read_text() or ""
             match = _URL.search(text)
@@ -271,7 +281,7 @@ def find_source(given: list[str], *, prefer_last: bool) -> Source:
             if pasted:
                 return Source(files=pasted, where="clipboard")
 
-    remembered = _remembered()
+    remembered = _remembered() if (prefer_last or fall_back_to_last) else None
     if remembered:
         return remembered
 
@@ -626,6 +636,10 @@ def run(argv: list[str]) -> int:
             return cmd_presets(rest)
         if command == "doctor":
             return deps.doctor(fix="--fix" in rest)
+        if command == "tray":
+            from .tray import cmd_tray  # noqa: PLC0415 - Windows-only, keep startup lean
+
+            return cmd_tray(rest)
 
     preset_set = presets.load()
     parser = build_parser(preset_set)
@@ -635,11 +649,29 @@ def run(argv: list[str]) -> int:
         print(f"crec {__version__}  (yt-dlp {deps.ytdlp_version()})")
         return 0
 
+    job(args, preset_set)
+    return 0
+
+
+def job(
+    args: argparse.Namespace,
+    preset_set: presets.PresetSet,
+    *,
+    progress: Progress | None = None,
+    fall_back_to_last: bool = True,
+) -> list[Path]:
+    """One full run: find the input, download or stage it, process, copy.
+
+    Shared by the command line and the tray, which is why it returns the
+    finished paths rather than an exit code and reports failure by raising.
+    """
     for warning in preset_set.warnings:
         print(f"warning: {warning}", file=sys.stderr)
 
     options, used_presets = resolve_options(args, preset_set)
-    source = find_source(args.inputs, prefer_last=args.last)
+    source = find_source(
+        args.inputs, prefer_last=args.last, fall_back_to_last=fall_back_to_last
+    )
     local = source.url is None
 
     if local and not _has_local_work(options):
@@ -654,7 +686,7 @@ def run(argv: list[str]) -> int:
     )
 
     update_check = _UpdateCheck() if not local else None
-    progress = Progress()
+    progress = progress or Progress()
     label = f" ({', '.join('--' + p for p in used_presets)})" if used_presets else ""
     if local:
         shown = source.files[0].name if len(source.files) == 1 else f"{len(source.files)} files"
@@ -727,7 +759,7 @@ def run(argv: list[str]) -> int:
 
     if update_check:
         update_check.report()
-    return 0
+    return finals
 
 
 class _UpdateCheck:

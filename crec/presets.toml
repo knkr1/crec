@@ -64,3 +64,12 @@ quality = 720
 [hd]
 description = "1080p"
 quality = 1080
+
+# --- hotkeys for `crec tray` -------------------------------------------------
+# Global shortcuts: copy a link or a file, press one, paste the result.
+# Each maps a key combo to the flags it runs crec with ("" = plain `crec`).
+# Defining [hotkeys] in your own file replaces this whole table.
+# Modifiers: ctrl shift alt win. Keys: a-z 0-9 f1-f24.
+[hotkeys]
+"ctrl+shift+alt+c" = ""
+"ctrl+shift+alt+d" = "--discord"
