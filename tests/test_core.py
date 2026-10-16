@@ -322,10 +322,22 @@ def test_needs_reencode_is_false_for_a_plain_download() -> None:
 
 @pytest.mark.parametrize(
     "kwargs",
-    [{"target_mb": 8}, {"crf": 20}, {"fps": 30}, {"scale": 640}, {"exact_cut": True}, {"format": "gif"}],
+    [{"target_mb": 8}, {"crf": 20}, {"fps": 30}, {"scale": 640}, {"format": "gif"}],
 )
 def test_needs_reencode_detects_work(kwargs: dict) -> None:
     assert Options(**kwargs).needs_reencode is True
+
+
+def test_exact_cut_alone_does_not_force_a_reencode() -> None:
+    """The trim does the exact cut; re-encoding afterwards was a wasted remux."""
+    assert Options(cut="0:10-0:20", exact_cut=True).needs_reencode is False
+
+
+def test_audio_format_implies_audio_only() -> None:
+    """`--format mp3` used to download the video and leave it as mp4."""
+    options, _ = _resolve(["--format", "mp3"])
+    assert options.audio_only is True
+    assert _resolve(["--format", "mp4"])[0].audio_only is False
 
 
 def test_plain_cut_alone_does_not_force_a_reencode() -> None:
@@ -439,3 +451,137 @@ def test_verdict_warns_when_it_cannot_tell() -> None:
     needs, warning = _verdict("1:30-", actual=600.0, source=None)
     assert needs is False
     assert warning and "could not confirm" in warning
+
+
+# --------------------------------------------------------------------------- #
+# codecs follow the container
+# --------------------------------------------------------------------------- #
+
+def test_audio_reencode_into_mp3_uses_an_mp3_encoder(captured_args) -> None:
+    """Regression: `crec -a -s 5` asked for AAC inside an .mp3, which ffmpeg refuses."""
+    media.convert(Path("in.mp3"), Path("out.mp3"), audio_kbps=96)
+    args = captured_args[0]
+    assert args[args.index("-c:a") + 1] == "libmp3lame"
+
+
+def test_webm_reencode_does_not_use_h264(captured_args) -> None:
+    media.convert(Path("in.webm"), Path("out.webm"), crf=30)
+    args = captured_args[0]
+    assert "libx264" not in args
+    assert args[args.index("-c:v") + 1] == "libvpx-vp9"
+
+
+def test_lossless_audio_is_compressed_to_mp3() -> None:
+    assert media.lossless_to_lossy(Path("a.wav")) == ".mp3"
+    assert media.lossless_to_lossy(Path("a.m4a")) == ".m4a"
+
+
+def test_probe_ignores_cover_art(monkeypatch, tmp_path) -> None:
+    """An mp3's embedded thumbnail is a 'video' stream to ffprobe. Treating it
+    as video sent `--music -s 10` through the x264 encoder."""
+    import json
+    import subprocess
+
+    payload = {
+        "format": {"duration": "200.0"},
+        "streams": [
+            {"codec_type": "audio", "sample_rate": "44100"},
+            {"codec_type": "video", "width": 600, "height": 600,
+             "disposition": {"attached_pic": 1}},
+        ],
+    }
+    monkeypatch.setattr(media.deps, "ffprobe_path", lambda **_: Path("ffprobe"))
+    monkeypatch.setattr(
+        media.deps, "run_quiet",
+        lambda _args: subprocess.CompletedProcess([], 0, json.dumps(payload), ""),
+    )
+    info = media.probe(tmp_path / "song.mp3")
+    assert info.has_audio and not info.has_video
+
+
+# --------------------------------------------------------------------------- #
+# fitting audio and gifs to a size
+# --------------------------------------------------------------------------- #
+
+def test_fit_audio_picks_a_bitrate_that_fits(monkeypatch, tmp_path) -> None:
+    requested: list[int] = []
+
+    def fake_convert(_src, dst, *, audio_kbps):
+        requested.append(audio_kbps)
+        dst.write_bytes(b"x" * int(audio_kbps * 1000 / 8 * 600))  # CBR, 600 s
+
+    monkeypatch.setattr(media, "convert", fake_convert)
+    info = media.Probe(600.0, 0, 0, 0.0, True, False, 50 * 1_048_576)
+    media.fit_audio(Path("in.mp3"), tmp_path / "out.mp3", info, 5)
+
+    assert len(requested) == 1
+    assert (tmp_path / "out.mp3").stat().st_size <= 5 * 1_048_576
+
+
+def test_fit_audio_retries_when_extra_streams_overshoot(monkeypatch, tmp_path) -> None:
+    """Cover art rides along uncounted; the second attempt must correct for it."""
+    calls: list[int] = []
+
+    def fake_convert(_src, dst, *, audio_kbps):
+        calls.append(audio_kbps)
+        dst.write_bytes(b"x" * (int(audio_kbps * 1000 / 8 * 600) + 300_000))
+
+    monkeypatch.setattr(media, "convert", fake_convert)
+    info = media.Probe(600.0, 0, 0, 0.0, True, False, 50 * 1_048_576)
+    media.fit_audio(Path("in.mp3"), tmp_path / "out.mp3", info, 5)
+
+    assert len(calls) == 2 and calls[1] < calls[0]
+    assert (tmp_path / "out.mp3").stat().st_size <= 5 * 1_048_576
+
+
+def test_fit_audio_refuses_rather_than_making_noise() -> None:
+    info = media.Probe(3 * 3600.0, 0, 0, 0.0, True, False, 1)
+    with pytest.raises(ImpossibleTarget):
+        media.fit_audio(Path("in.mp3"), Path("out.mp3"), info, 5)
+
+
+def _fake_gif(monkeypatch, bytes_per_px2_fps: float):
+    calls: list[tuple[int, int]] = []
+
+    def fake(_src, dst, *, fps, width):
+        calls.append((width, fps))
+        dst.write_bytes(b"x" * int(width * width * fps * bytes_per_px2_fps))
+
+    monkeypatch.setattr(media, "to_gif", fake)
+    monkeypatch.setattr(
+        media, "probe", lambda _p: media.Probe(5.0, 1920, 1080, 30.0, True, True, 1)
+    )
+    return calls
+
+
+def test_fit_gif_shrinks_until_it_fits(monkeypatch, tmp_path) -> None:
+    """Regression: --gif used to ignore -s entirely."""
+    # Sizes scaled down 100x so the fakes stay quick: 480px@15 ~ 0.2 MB vs 0.1 MB.
+    calls = _fake_gif(monkeypatch, bytes_per_px2_fps=0.06)
+    out = tmp_path / "out.gif"
+    media.fit_gif(Path("in.mp4"), out, 0.1, fps=15, width=480)
+
+    assert len(calls) > 1
+    assert out.stat().st_size <= 0.1 * 1_048_576
+
+
+def test_fit_gif_leaves_a_small_gif_alone(monkeypatch, tmp_path) -> None:
+    calls = _fake_gif(monkeypatch, bytes_per_px2_fps=0.01)
+    media.fit_gif(Path("in.mp4"), tmp_path / "out.gif", 0.1, fps=15, width=480)
+    assert calls == [(480, 15)]
+
+
+def test_fit_gif_gives_up_honestly(monkeypatch, tmp_path) -> None:
+    _fake_gif(monkeypatch, bytes_per_px2_fps=1.0)  # even 160px@8 is ~0.2 MB
+    with pytest.raises(ImpossibleTarget):
+        media.fit_gif(Path("in.mp4"), tmp_path / "out.gif", 0.01, fps=15, width=480)
+
+
+# --------------------------------------------------------------------------- #
+# clipboard
+# --------------------------------------------------------------------------- #
+
+def test_applescript_quoting_survives_quotes_in_titles() -> None:
+    from crec.clipboard import _applescript_string
+
+    assert _applescript_string('a "b" \\c') == '"a \\"b\\" \\\\c"'

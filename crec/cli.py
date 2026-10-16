@@ -162,7 +162,12 @@ def resolve_options(
             options = options.merged_with(preset_set.presets[name].values)
             used.append(name)
 
-    return options.merged_with(explicit_options(args)), used
+    options = options.merged_with(explicit_options(args))
+    if options.wants_audio_container:
+        # `--format mp3` means audio. Without this it downloaded the video and
+        # left it as mp4, since nothing downstream converts video to audio.
+        options.audio_only = True
+    return options, used
 
 
 # --------------------------------------------------------------------------- #
@@ -289,6 +294,10 @@ def post_process(
     """Apply cut/size/format work to a downloaded file. Returns the final path."""
     current = path
 
+    def note(text: str) -> None:
+        say(None)
+        print(f"  {text}", file=sys.stderr)
+
     if options.cut:
         needs_trim, warning = _trim_verdict(current, options.cut, source_duration)
         if warning:
@@ -303,7 +312,13 @@ def post_process(
     if (options.format or "") == "gif":
         say("converting to gif")
         temporary = _temp_beside(current, ".gif")
-        media.to_gif(current, temporary, fps=options.fps or 15, width=options.scale or 480)
+        fps, width = options.fps or 15, options.scale or 480
+        if options.target_mb is not None:
+            media.fit_gif(
+                current, temporary, options.target_mb, fps=fps, width=width, on_note=note
+            )
+        else:
+            media.to_gif(current, temporary, fps=fps, width=width)
         gif = current.with_suffix(".gif")
         gif.unlink(missing_ok=True)
         temporary.rename(gif)
@@ -321,17 +336,10 @@ def post_process(
             )
         elif not info.has_video:
             say("compressing audio")
-            temporary = _temp_beside(current, current.suffix)
-            media.convert(
-                current, temporary,
-                audio_kbps=int(options.target_mb * 8192 / max(info.duration, 1)),
-            )
+            temporary = _temp_beside(current, media.lossless_to_lossy(current))
+            media.fit_audio(current, temporary, info, options.target_mb)
             current = media.replace(temporary, current)
         else:
-            def note(text: str) -> None:
-                say(None)
-                print(f"  {text}", file=sys.stderr)
-
             def pass_label(pass_number: int, attempt: int) -> None:
                 suffix = "" if attempt == 1 else f", retry {attempt - 1}"
                 say(
@@ -473,13 +481,20 @@ def run(argv: list[str]) -> int:
         Path(options.output_dir).expanduser() if options.output_dir else paths.downloads_dir()
     )
 
+    update_check = _UpdateCheck()
     progress = Progress()
     label = f" ({', '.join('--' + p for p in used_presets)})" if used_presets else ""
     print(f"crec {url}{label}", file=sys.stderr)
     if source == "last run":
         print("  (reusing the last URL - the clipboard has no link)", file=sys.stderr)
 
-    if options.target_mb is not None and options.quality is None:
+    # Video-only maths: for audio it would refuse targets that audio easily fits.
+    if (
+        options.target_mb is not None
+        and options.quality is None
+        and not options.audio_only
+        and options.format != "gif"
+    ):
         progress.stage("checking what we need")
         cap, message = _plan_download_quality(url, options)
         progress.done()
@@ -527,24 +542,43 @@ def run(argv: list[str]) -> int:
     if options.open_folder and finals:
         _reveal(finals[0])
 
-    _passive_update_check()
+    update_check.report()
     return 0
 
 
-def _passive_update_check() -> None:
-    """Runs only after a successful download, so it never costs latency."""
-    if not deps.should_check_update():
-        return
-    deps.record_update_check()
-    latest = deps.latest_ytdlp_version()
-    if not latest:
-        return
-    current = deps.ytdlp_version()
-    if deps._normalise(current) != deps._normalise(latest):
-        print(
-            f"\nyt-dlp {latest} is out (you have {current}). Run: crec update",
-            file=sys.stderr,
-        )
+class _UpdateCheck:
+    """Asks PyPI for the latest yt-dlp while the download runs.
+
+    It used to run after the download, which added up to a 10s network
+    timeout to the end of a run once a day. Now it overlaps the download, and
+    if it still hasn't answered by the end we skip the notice rather than wait.
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self.latest: str | None = None
+        self._thread: threading.Thread | None = None
+        if deps.should_check_update():
+            deps.record_update_check()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+
+    def _run(self) -> None:
+        self.latest = deps.latest_ytdlp_version()
+
+    def report(self) -> None:
+        if self._thread is None:
+            return
+        self._thread.join(timeout=0.5)
+        if not self.latest:
+            return
+        current = deps.ytdlp_version()
+        if deps._normalise(current) != deps._normalise(self.latest):
+            print(
+                f"\nyt-dlp {self.latest} is out (you have {current}). Run: crec update",
+                file=sys.stderr,
+            )
 
 
 def main() -> int:
