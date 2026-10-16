@@ -585,3 +585,148 @@ def test_applescript_quoting_survives_quotes_in_titles() -> None:
     from crec.clipboard import _applescript_string
 
     assert _applescript_string('a "b" \\c') == '"a \\"b\\" \\\\c"'
+
+
+# --------------------------------------------------------------------------- #
+# local files: where the input comes from
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def desk(monkeypatch, tmp_path):
+    """A fake clipboard and a private state file."""
+    from crec import cli, clipboard, state
+
+    board = {"files": [], "text": ""}
+    monkeypatch.setattr(clipboard, "read_files", lambda: list(board["files"]))
+    monkeypatch.setattr(clipboard, "read_text", lambda: board["text"])
+    monkeypatch.setattr(state.paths, "state_file", lambda: tmp_path / "state.json")
+    monkeypatch.setattr(state.paths, "data_dir", lambda: tmp_path)
+    return board, cli, state, tmp_path
+
+
+def _video(folder: Path, name: str = "clip.mp4") -> Path:
+    path = folder / name
+    path.write_bytes(b"not really a video")
+    return path
+
+
+def test_copied_file_beats_last_url(desk) -> None:
+    board, cli, state, tmp = desk
+    state.remember("https://example.com/old")
+    board["files"] = [_video(tmp)]
+
+    source = cli.find_source([], prefer_last=False)
+    assert source.url is None and source.files == [tmp / "clip.mp4"]
+
+
+def test_copied_url_still_works(desk) -> None:
+    board, cli, *_ = desk
+    board["text"] = "look at this https://example.com/v/1 lol"
+    assert cli.find_source([], prefer_last=False).url == "https://example.com/v/1"
+
+
+def test_copy_as_path_text_is_a_file(desk) -> None:
+    """Explorer's "Copy as path" puts the path in quotes, as text."""
+    board, cli, _, tmp = desk
+    clip = _video(tmp)
+    board["text"] = f'"{clip}"'
+    assert cli.find_source([], prefer_last=False).files == [clip]
+
+
+def test_non_media_copied_files_are_ignored(desk) -> None:
+    board, cli, _, tmp = desk
+    notes = tmp / "notes.docx"
+    notes.write_bytes(b"x")
+    board["files"] = [notes]
+    board["text"] = "https://example.com/v/2"
+    assert cli.find_source([], prefer_last=False).url == "https://example.com/v/2"
+
+
+def test_own_output_on_clipboard_means_the_same_url_again(desk) -> None:
+    """`crec` then `crec -a` must re-fetch the source, not process crec's output."""
+    board, cli, state, tmp = desk
+    output = _video(tmp, "downloaded.mp4")
+    state.remember("https://example.com/v/3", [output])
+    board["files"] = [output]
+
+    source = cli.find_source([], prefer_last=False)
+    assert source.url == "https://example.com/v/3"
+
+
+def test_own_output_on_clipboard_means_the_same_file_again(desk) -> None:
+    """`crec clip.mp4 --discord` then `crec --gif` works from the original."""
+    board, cli, state, tmp = desk
+    original, output = _video(tmp), _video(tmp, "clip-crec.mp4")
+    state.remember(None, [output], inputs=[original])
+    board["files"] = [output]
+
+    assert cli.find_source([], prefer_last=False).files == [original]
+
+
+def test_last_flag_ignores_the_clipboard(desk) -> None:
+    board, cli, state, tmp = desk
+    state.remember("https://example.com/v/4")
+    board["files"] = [_video(tmp)]
+    assert cli.find_source([], prefer_last=True).url == "https://example.com/v/4"
+
+
+def test_state_remembers_one_kind_of_source(desk) -> None:
+    _, _, state, tmp = desk
+    state.remember("https://example.com/v/5")
+    state.remember(None, inputs=[_video(tmp)])
+    assert state.last_url() is None and state.last_inputs() == [tmp / "clip.mp4"]
+
+
+def test_folder_argument_takes_its_media_only(desk) -> None:
+    _, cli, _, tmp = desk
+    folder = tmp / "clips"
+    folder.mkdir()
+    for name in ("b.mp4", "a.mkv", "readme.txt"):
+        (folder / name).write_bytes(b"x")
+    (folder / "nested").mkdir()
+
+    assert [p.name for p in cli.find_source([str(folder)], prefer_last=False).files] == [
+        "a.mkv", "b.mp4",
+    ]
+
+
+def test_bad_argument_says_what_it_expected(desk) -> None:
+    _, cli, *_ = desk
+    with pytest.raises(CrecError, match="not a URL, a file, or a folder"):
+        cli.find_source(["nope.mp4"], prefer_last=False)
+
+
+def test_nothing_to_do_with_a_bare_local_file() -> None:
+    from crec import cli
+
+    assert not cli._has_local_work(Options())
+    assert cli._has_local_work(Options(target_mb=10))
+    assert cli._has_local_work(Options(cut="0:01-0:02"))
+    assert cli._has_local_work(Options(audio_only=True))
+
+
+def test_staging_never_endangers_the_original(tmp_path) -> None:
+    """Post-processing replaces files by name; the user's file must survive it."""
+    from crec import cli
+
+    original = _video(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    staged = cli._stage(original, out)
+    assert staged != original
+
+    # What media.replace does after an encode: unlink the name, move a new file in.
+    produced = out / "new.mp4"
+    produced.write_bytes(b"encoded")
+    final = media.replace(produced, staged)
+
+    assert original.read_bytes() == b"not really a video"
+    assert final.read_bytes() == b"encoded"
+
+
+def test_paths_in_text_handles_multiple_quoted_lines(tmp_path) -> None:
+    from crec import clipboard
+
+    a, b = _video(tmp_path, "a.mp4"), _video(tmp_path, "b.mp4")
+    text = f'"{a}"\r\n"{b}"\r\n"{tmp_path / "missing.mp4"}"'
+    assert clipboard.paths_in_text(text) == [a, b]

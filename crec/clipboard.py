@@ -155,6 +155,33 @@ def _win_copy_files(files: list[Path]) -> None:
         user32.CloseClipboard()
 
 
+def _win_read_files() -> list[Path]:
+    """Files copied in Explorer (Ctrl+C on a file) arrive as CF_HDROP."""
+    import ctypes
+    from ctypes import wintypes
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
+    shell32.DragQueryFileW.restype = wintypes.UINT
+
+    user32 = _win_session()
+    try:
+        if not user32.IsClipboardFormatAvailable(CF_HDROP):
+            return []
+        handle = user32.GetClipboardData(CF_HDROP)
+        if not handle:
+            return []
+        files: list[Path] = []
+        for index in range(shell32.DragQueryFileW(handle, 0xFFFFFFFF, None, 0)):
+            length = shell32.DragQueryFileW(handle, index, None, 0)
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            shell32.DragQueryFileW(handle, index, buffer, length + 1)
+            files.append(Path(buffer.value))
+        return files
+    finally:
+        user32.CloseClipboard()
+
+
 def _win_read_text() -> str:
     import ctypes
     from ctypes import wintypes
@@ -197,6 +224,35 @@ def _mac_copy_files(files: list[Path]) -> None:
         raise OSError(f"osascript failed: {result.stderr.strip()}")
 
 
+def _mac_read_files() -> list[Path]:
+    result = subprocess.run(
+        ["osascript", "-e", "POSIX path of (the clipboard as «class furl»)"],
+        capture_output=True, text=True, check=False,
+    )
+    path = result.stdout.strip()
+    return [Path(path)] if result.returncode == 0 and path else []
+
+
+def _linux_read_files() -> list[Path]:
+    from urllib.parse import unquote, urlparse
+
+    for command in (
+        ["wl-paste", "--no-newline", "--type", "text/uri-list"],
+        ["xclip", "-selection", "clipboard", "-t", "text/uri-list", "-o"],
+    ):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError:
+            continue
+        if result.returncode == 0:
+            return [
+                Path(unquote(urlparse(line.strip()).path))
+                for line in result.stdout.splitlines()
+                if line.strip().startswith("file://")
+            ]
+    return []
+
+
 def _mac_read_text() -> str:
     result = subprocess.run(["pbpaste"], capture_output=True, text=True, check=False)
     return result.stdout if result.returncode == 0 else ""
@@ -220,6 +276,39 @@ def copy_files(files: list[Path]) -> None:
         _mac_copy_files(real)
     else:
         raise ClipboardUnsupported(describe())
+
+
+def read_files() -> list[Path]:
+    """Files on the clipboard, copied as files (not as text). Never raises."""
+    try:
+        if sys.platform == "win32":
+            found = _win_read_files()
+        elif sys.platform == "darwin":
+            found = _mac_read_files()
+        else:
+            found = _linux_read_files()
+    except OSError:
+        return []
+    return [path for path in found if path.is_file()]
+
+
+def paths_in_text(text: str) -> list[Path]:
+    """Existing files named in clipboard *text*, one per line.
+
+    Explorer's "Copy as path" wraps each path in double quotes, so strip them.
+    """
+    found: list[Path] = []
+    for line in text.splitlines():
+        candidate = line.strip().strip('"').strip()
+        if not candidate:
+            continue
+        try:
+            path = Path(candidate).expanduser()
+            if path.is_file():
+                found.append(path)
+        except (OSError, ValueError):
+            continue
+    return found
 
 
 def read_text() -> str:

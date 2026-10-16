@@ -20,6 +20,9 @@ crec -a                     # just the audio, reusing the last URL
 crec --gif -c 1:00-1:05     # a five-second gif
 ```
 
+It works on files you already have, too. Copy a video in Explorer (Ctrl+C on the file),
+then run `crec --discord`, and the shrunk version is on your clipboard.
+
 ---
 
 ## Contents
@@ -30,6 +33,7 @@ crec --gif -c 1:00-1:05     # a five-second gif
 - [Presets](#presets)
 - [How the size targeting works](#how-the-size-targeting-works)
 - [How trimming works](#how-trimming-works)
+- [Files you already have](#files-you-already-have)
 - [The clipboard](#the-clipboard)
 - [Keeping yt-dlp current](#keeping-yt-dlp-current)
 - [Commands](#commands)
@@ -135,7 +139,7 @@ The rest, for when you need them:
 | `-p` | grab the whole playlist |
 | `--open` | show me the file when it's done |
 | `--ffmpeg "..."` | pass your own arguments through to ffmpeg |
-| `--last` | use the previous URL, ignore whatever's on the clipboard |
+| `--last` | use the previous URL or file, ignore whatever's on the clipboard |
 
 Timestamps for `-c` are flexible: `0:10-0:40`, `90-150` for plain seconds,
 `1:02:03-1:02:10`, `0:10-` to go from there to the end, or `-0:40` to start at the
@@ -345,6 +349,32 @@ pinning that so it doesn't come back.
 
 ---
 
+## Files you already have
+
+Shrinking a video for Discord shouldn't mean uploading it to some converter site full of
+ads. Point crec at a file instead of a link and it skips the download and goes straight to
+the trimming, shrinking and converting:
+
+```bash
+crec clip.mp4 --discord          # fit it under Discord's limit
+crec clip.mp4 -c 0:05-0:20       # just that part
+crec clip.mp4 -a                 # pull the audio out as mp3
+crec clip.mov --format mp4       # change the container (re-encodes only if it must)
+crec ./clips --discord           # every video directly inside that folder
+```
+
+Or skip typing the path: copy the file in Explorer or Finder and run `crec --discord`.
+Explorer's "Copy as path" works too, and so does dragging a file into the terminal.
+
+Where crec looks, in order: what you typed, a file on the clipboard, a link on the
+clipboard, then whatever the last run worked on.
+
+Your original is never touched. The result lands in `~/crec` as `clip-crec.mp4` and goes
+on your clipboard like any other download. Running `crec` on a file with no flags is an
+error rather than a pointless copy, since there's nothing to do to it.
+
+---
+
 ## The clipboard
 
 Putting an actual file on the clipboard works on Windows through `CF_HDROP`, written
@@ -364,7 +394,8 @@ the video.
 One side effect worth knowing about: since crec replaces the URL on your clipboard with
 the finished file, running it again immediately afterwards would find nothing. So it
 remembers the last URL, which means `crec` followed by `crec -a` gets you the audio of
-the same video without going back to the browser.
+the same video without going back to the browser. The same goes for files: if the thing
+on your clipboard is crec's own output, crec goes back to what that output was made from.
 
 Everything else — downloading, trimming, size targeting, gifs — works the same on all
 three platforms.

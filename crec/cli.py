@@ -10,8 +10,10 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import __version__, clipboard, deps, download, media, paths, presets, state
@@ -39,7 +41,8 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
         description=(
             "yt-dlp + ffmpeg with a clipboard.\n\n"
             "Run `crec` with no arguments: it takes the URL from your clipboard,\n"
-            "downloads it, and puts the finished file back on your clipboard."
+            "downloads it, and puts the finished file back on your clipboard.\n"
+            "Copy a file instead of a link and crec works on that file."
         ),
         epilog=(
             "examples:\n"
@@ -48,6 +51,8 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
             "  crec -c 0:10-0:40 -s 8      trim to 30s and fit under 8 MB\n"
             "  crec -a                     audio only (reuses the last URL)\n"
             "  crec --gif -c 1:00-1:05     five-second GIF\n"
+            "  crec clip.mp4 --discord     shrink a file you already have\n"
+            "  crec ./clips --discord      every video in a folder\n"
             "\n"
             "commands:\n"
             "  crec update                 update yt-dlp now\n"
@@ -56,7 +61,10 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
         ),
     )
 
-    parser.add_argument("url", nargs="?", help="URL (default: read from clipboard)")
+    parser.add_argument(
+        "inputs", nargs="*", metavar="URL|FILE",
+        help="a URL, or files/folders to work on (default: the clipboard)",
+    )
 
     core = parser.add_argument_group("the ones you'll actually use")
     core.add_argument("-q", "--quality", type=int, metavar="H", help="max height, e.g. 720")
@@ -83,7 +91,7 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
     more.add_argument("-p", "--playlist", action="store_true", default=None, help="download the whole playlist")
     more.add_argument("--open", action="store_true", default=None, help="reveal the file when done")
     more.add_argument("--ffmpeg", metavar="ARGS", help="extra raw ffmpeg arguments")
-    more.add_argument("--last", action="store_true", help="reuse the last URL, ignoring the clipboard")
+    more.add_argument("--last", action="store_true", help="reuse the last URL or file, ignoring the clipboard")
     more.add_argument("-v", "--version", action="store_true", help="show version and exit")
 
     # Ask the parser which option strings are taken rather than maintaining a
@@ -174,26 +182,125 @@ def resolve_options(
 # URL sourcing
 # --------------------------------------------------------------------------- #
 
-def find_url(explicit: str | None, *, prefer_last: bool) -> tuple[str, str]:
-    """Return ``(url, where_it_came_from)``."""
-    if explicit:
-        match = _URL.search(explicit)
-        if match:
-            return match.group(0), "argument"
-        raise CrecError(f"'{explicit}' is not a URL.")
+MEDIA_SUFFIXES = {
+    ".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".wmv", ".ts", ".gif",
+    ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac",
+}
+
+
+@dataclass
+class Source:
+    """What a run works on: a URL to download, or files already on disk."""
+
+    url: str | None = None
+    files: list[Path] = field(default_factory=list)
+    where: str = ""
+
+
+def _media_in(folder: Path) -> list[Path]:
+    """Media files directly inside *folder* - not recursive, never surprising."""
+    return sorted(
+        p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in MEDIA_SUFFIXES
+    )
+
+
+def _from_arguments(given: list[str]) -> Source:
+    if len(given) == 1:
+        match = _URL.search(given[0])
+        if match and not Path(given[0]).exists():
+            return Source(url=match.group(0), where="argument")
+
+    files: list[Path] = []
+    for raw in given:
+        path = Path(raw.strip('"')).expanduser()
+        if path.is_dir():
+            found = _media_in(path)
+            if not found:
+                raise CrecError(f"No video or audio files in {path}.")
+            files.extend(found)
+        elif path.is_file():
+            files.append(path)
+        elif _URL.search(raw):
+            raise CrecError("One URL at a time - for a playlist, pass its URL with -p.")
+        else:
+            raise CrecError(f"'{raw}' is not a URL, a file, or a folder.")
+    return Source(files=files, where="argument")
+
+
+def _remembered() -> Source | None:
+    inputs = state.last_inputs()
+    if inputs:
+        return Source(files=inputs, where="last run")
+    url = state.last_url()
+    if url:
+        return Source(url=url, where="last run")
+    return None
+
+
+def _same_files(left: list[Path], right: list[Path]) -> bool:
+    def key(paths: list[Path]) -> set[str]:
+        return {os.path.normcase(str(p.resolve())) for p in paths}
+
+    return bool(left) and key(left) == key(right)
+
+
+def find_source(given: list[str], *, prefer_last: bool) -> Source:
+    """Pick what to work on: arguments > a copied file > a copied URL > last run."""
+    if given:
+        return _from_arguments(given)
 
     if not prefer_last:
-        match = _URL.search(clipboard.read_text() or "")
-        if match:
-            return match.group(0), "clipboard"
+        copied = [p for p in clipboard.read_files() if p.suffix.lower() in MEDIA_SUFFIXES]
+        if copied:
+            # Our own output still on the clipboard means "the same thing again":
+            # `crec` then `crec -a` should re-fetch the audio, not dig it out of
+            # the already-processed file. Fall through to the last run instead.
+            if not _same_files(copied, state.last_files()):
+                return Source(files=copied, where="clipboard")
+        else:
+            text = clipboard.read_text() or ""
+            match = _URL.search(text)
+            if match:
+                return Source(url=match.group(0), where="clipboard")
+            pasted = [p for p in clipboard.paths_in_text(text) if p.suffix.lower() in MEDIA_SUFFIXES]
+            if pasted:
+                return Source(files=pasted, where="clipboard")
 
-    remembered = state.last_url()
+    remembered = _remembered()
     if remembered:
-        return remembered, "last run"
+        return remembered
 
     raise CrecError(
-        "No URL found. Copy a link and run `crec`, or pass one: crec <url>"
+        "Nothing to work on. Copy a link or a video file and run `crec`, "
+        "or pass one: crec <url|file>"
     )
+
+
+def _has_local_work(options: Options) -> bool:
+    """Whether the options ask for anything a file on disk doesn't already have."""
+    return any(
+        (
+            options.cut, options.needs_reencode, options.audio_only, options.no_audio,
+            options.quality, options.format,
+        )
+    )
+
+
+def _stage(source: Path, output_dir: Path) -> Path:
+    """Give post-processing its own name for *source*, leaving the original alone.
+
+    Post-processing swaps files into place by name, so it must never run on the
+    user's file itself. A hard link is instant and costs no space; the original
+    survives because every step writes a new file rather than editing in place.
+    Copy when linking is impossible (another drive, FAT32).
+    """
+    staged = output_dir / f"{source.stem}-crec{source.suffix}"
+    staged.unlink(missing_ok=True)
+    try:
+        os.link(source, staged)
+    except OSError:
+        shutil.copy2(source, staged)
+    return staged
 
 
 # --------------------------------------------------------------------------- #
@@ -289,9 +396,18 @@ def _trim_verdict(
 
 
 def post_process(
-    path: Path, options: Options, say, *, source_duration: float | None = None
+    path: Path,
+    options: Options,
+    say,
+    *,
+    source_duration: float | None = None,
+    local: bool = False,
 ) -> Path:
-    """Apply cut/size/format work to a downloaded file. Returns the final path."""
+    """Apply cut/size/format work to a file. Returns the final path.
+
+    ``local`` means the file did not come from yt-dlp, so nothing upstream
+    trimmed it, extracted its audio or picked its container - do that here.
+    """
     current = path
 
     def note(text: str) -> None:
@@ -299,15 +415,20 @@ def post_process(
         print(f"  {text}", file=sys.stderr)
 
     if options.cut:
-        needs_trim, warning = _trim_verdict(current, options.cut, source_duration)
+        if local:
+            needs_trim, warning = True, None
+        else:
+            needs_trim, warning = _trim_verdict(current, options.cut, source_duration)
         if warning:
-            say(None)
-            print(f"  note: {warning}", file=sys.stderr)
+            note(f"note: {warning}")
         if needs_trim:
-            say("trimming (the site ignored our range request)")
+            say("trimming" if local else "trimming (the site ignored our range request)")
             temporary = _temp_beside(current, current.suffix)
             media.trim(current, temporary, options.cut, exact=options.exact_cut)
             current = media.replace(temporary, current)
+
+    if local:
+        current = _local_conversions(current, options, say)
 
     if (options.format or "") == "gif":
         say("converting to gif")
@@ -360,18 +481,56 @@ def post_process(
             )
             current = media.replace(temporary, current)
 
-    elif options.needs_reencode:
-        say("re-encoding")
+    elif options.needs_reencode or (local and options.no_audio and media.probe(current).has_audio):
+        say("re-encoding" if options.needs_reencode else "removing the audio")
         suffix = f".{options.format}" if options.format else current.suffix
         temporary = _temp_beside(current, suffix)
         media.convert(
             current, temporary,
             crf=options.crf,
             width=options.scale,
+            height=options.quality if local else None,
             fps=options.fps,
             drop_audio=options.no_audio,
             audio_kbps=options.audio_quality,
             extra_args=options.ffmpeg_args,
+        )
+        current = media.replace(temporary, current)
+
+    return current
+
+
+_AUDIO_FORMATS = {"mp3", "m4a", "wav", "opus", "flac"}
+
+
+def _local_conversions(current: Path, options: Options, say) -> Path:
+    """What yt-dlp's format selection does for downloads, done for a local file."""
+    info = media.probe(current)
+
+    if options.audio_only and info.has_video:
+        say("extracting the audio")
+        extension = options.format if options.format in _AUDIO_FORMATS else "mp3"
+        temporary = _temp_beside(current, f".{extension}")
+        media.convert(current, temporary, drop_video=True, audio_kbps=options.audio_quality)
+        return media.replace(temporary, current)
+
+    wanted = f".{options.format}" if options.format and options.format != "gif" else None
+    if wanted and wanted != current.suffix.lower() and not options.needs_reencode:
+        say(f"converting to {options.format}")
+        temporary = _temp_beside(current, wanted)
+        try:
+            media.convert(current, temporary)  # remux: instant when the codecs fit
+        except CrecError:
+            media.convert(current, temporary, crf=options.crf)  # they didn't; re-encode
+        current = media.replace(temporary, current)
+
+    # -q means "download at most this tall". For a file we already have, honour
+    # it by scaling down - unless a later re-encode or size target will anyway.
+    if options.quality and info.height > options.quality and not options.needs_reencode:
+        say(f"scaling to {options.quality}p")
+        temporary = _temp_beside(current, current.suffix)
+        media.convert(
+            current, temporary, height=options.quality, drop_audio=options.no_audio
         )
         current = media.replace(temporary, current)
 
@@ -475,28 +634,42 @@ def run(argv: list[str]) -> int:
         print(f"warning: {warning}", file=sys.stderr)
 
     options, used_presets = resolve_options(args, preset_set)
-    url, source = find_url(args.url, prefer_last=args.last)
+    source = find_source(args.inputs, prefer_last=args.last)
+    local = source.url is None
+
+    if local and not _has_local_work(options):
+        noun = "that file" if len(source.files) == 1 else "those files"
+        raise CrecError(
+            f"Nothing to do with {noun} - say what you want, e.g. "
+            f"crec --discord, crec -c 0:10-0:20, crec --gif, crec -a"
+        )
 
     output_dir = paths.ensure(
         Path(options.output_dir).expanduser() if options.output_dir else paths.downloads_dir()
     )
 
-    update_check = _UpdateCheck()
+    update_check = _UpdateCheck() if not local else None
     progress = Progress()
     label = f" ({', '.join('--' + p for p in used_presets)})" if used_presets else ""
-    print(f"crec {url}{label}", file=sys.stderr)
-    if source == "last run":
-        print("  (reusing the last URL - the clipboard has no link)", file=sys.stderr)
+    if local:
+        shown = source.files[0].name if len(source.files) == 1 else f"{len(source.files)} files"
+        print(f"crec {shown}{label}", file=sys.stderr)
+    else:
+        print(f"crec {source.url}{label}", file=sys.stderr)
+    if source.where == "last run":
+        what = "file" if local else "URL"
+        print(f"  (reusing the last {what} - nothing new on the clipboard)", file=sys.stderr)
 
     # Video-only maths: for audio it would refuse targets that audio easily fits.
     if (
-        options.target_mb is not None
+        not local
+        and options.target_mb is not None
         and options.quality is None
         and not options.audio_only
         and options.format != "gif"
     ):
         progress.stage("checking what we need")
-        cap, message = _plan_download_quality(url, options)
+        cap, message = _plan_download_quality(source.url, options)
         progress.done()
         if cap is not None:
             options.quality = cap
@@ -506,21 +679,26 @@ def run(argv: list[str]) -> int:
         progress.done() if stage is None else progress.stage(stage)
 
     try:
-        downloaded = fetch(url, options, output_dir, progress)
-        if len(downloaded) > 1 and options.needs_reencode:
+        if local:
+            items = [download.Downloaded(path=_stage(f, output_dir)) for f in source.files]
+        else:
+            items = fetch(source.url, options, output_dir, progress)
+        if len(items) > 1 and options.needs_reencode:
             progress.done()
             print(
-                f"  {len(downloaded)} files to re-encode - this will take a while",
+                f"  {len(items)} files to re-encode - this will take a while",
                 file=sys.stderr,
             )
         finals = [
-            post_process(item.path, options, say, source_duration=item.source_duration)
-            for item in downloaded
+            post_process(
+                item.path, options, say, source_duration=item.source_duration, local=local
+            )
+            for item in items
         ]
     finally:
         progress.done()
 
-    state.remember(url, finals)
+    state.remember(source.url, finals, inputs=source.files)
 
     for path in finals:
         size = path.stat().st_size / 1_048_576
@@ -542,7 +720,8 @@ def run(argv: list[str]) -> int:
     if options.open_folder and finals:
         _reveal(finals[0])
 
-    update_check.report()
+    if update_check:
+        update_check.report()
     return 0
 
 
