@@ -35,3 +35,6 @@ include = ["crec*"]
 
 [tool.setuptools.package-data]
 crec = ["presets.toml", "assets/*.ico"]
+
+[tool.pytest.ini_options]
+markers = ["ffmpeg: runs a real ffmpeg (skipped when it is not installed)"]

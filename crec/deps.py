@@ -31,11 +31,11 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from . import paths
+from . import __version__, paths
 from .errors import MissingDependency
 
 UPDATE_CHECK_INTERVAL = 24 * 60 * 60  # seconds
-_USER_AGENT = "crec/2.0 (+https://github.com/knkr1/crec)"
+_USER_AGENT = f"crec/{__version__} (+https://github.com/knkr1/crec)"
 
 FFMPEG_URLS = {
     "win32": "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip",
