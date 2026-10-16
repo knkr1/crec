@@ -50,7 +50,7 @@ BUILTIN_FILE = _builtin_file()
 # Names that are commands rather than flags, so a preset can never shadow one.
 # Flag collisions are detected against the real parser in crec.cli instead of
 # being listed here - a hand-maintained list drifts the moment someone adds a flag.
-RESERVED = {"update", "doctor", "presets", "tray"}
+RESERVED = {"update", "doctor", "presets", "tray", "uninstall"}
 
 # Tables that configure something other than a preset.
 HOTKEYS_TABLE = "hotkeys"

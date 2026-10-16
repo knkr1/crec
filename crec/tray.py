@@ -336,9 +336,10 @@ class TrayApp:
     WM_TRAY = 0x8000 + 1  # WM_APP + 1: icon events
     WM_JOB_DONE = 0x8000 + 2
     WM_STATUS = 0x8000 + 3
+    WM_UPDATE_FOUND = 0x8000 + 4
 
     # menu command ids; hotkey items use HOTKEY_BASE + index
-    CMD_OPEN, CMD_EDIT, CMD_RELOAD, CMD_STARTUP, CMD_PAUSE, CMD_QUIT, CMD_LOG = range(1, 8)
+    CMD_OPEN, CMD_EDIT, CMD_RELOAD, CMD_STARTUP, CMD_PAUSE, CMD_QUIT, CMD_LOG, CMD_UPDATE = range(1, 9)
     HOTKEY_BASE = 100
 
     def __init__(self) -> None:
@@ -349,7 +350,10 @@ class TrayApp:
         self.status = "ready"
         self.result: tuple[str, object] | None = None
         self.last_files: list[Path] = []
-        self.balloon_target: Path | None = None
+        self.balloon_action = None  # what clicking the current notification does
+        self.update_found: str | None = None
+        self.update_announced = False  # an explicit check reports "up to date" too
+        self.update_quiet = False  # after a job: don't replace the "Ready" notification
         self.hwnd = None
         # Windows calls the window procedure during CreateWindowExW, before this
         # is known. -1 matches no message (0 would match WM_NULL).
@@ -443,6 +447,7 @@ class TrayApp:
             }
             self._add_icon()
             self._register_hotkeys(announce=True)
+            self._check_for_update()
         except Exception:  # noqa: BLE001 - nowhere to show it but the log
             log("tray failed to start:\n" + traceback.format_exc())
             return 1
@@ -501,7 +506,8 @@ class TrayApp:
 
     def _tooltip(self) -> str:
         state = "paused" if self.paused else self.status
-        return f"crec - {state}"[:127]
+        extra = f" - crec {self.update_found} available" if self.update_found else ""
+        return f"crec - {state}{extra}"[:127]
 
     def _refresh(self, icon: str | None = None) -> None:
         data = self._icon_data(0x02 | 0x04 | 0x80)
@@ -509,8 +515,13 @@ class TrayApp:
         data.szTip = self._tooltip()
         self._notify(1, data)  # NIM_MODIFY
 
-    def _balloon(self, title: str, text: str, *, error: bool = False, target: Path | None = None) -> None:
-        self.balloon_target = target
+    def _balloon(
+        self, title: str, text: str, *, error: bool = False,
+        target: Path | None = None, action=None,
+    ) -> None:
+        from .cli import _reveal
+
+        self.balloon_action = action or ((lambda: _reveal(target)) if target else None)
         data = self._icon_data(0x10)  # NIF_INFO
         data.szInfoTitle = title[:63]
         data.szInfo = (text[:252] + "...") if len(text) > 255 else text
@@ -572,6 +583,64 @@ class TrayApp:
         self.status = text
         self.user32.PostMessageW(self.hwnd, self.WM_STATUS, 0, 0)
 
+    # --- crec's own updates -------------------------------------------------
+
+    def _check_for_update(self, *, force: bool = False, quiet: bool = False) -> None:
+        """Look for a newer crec at most daily, off the UI thread.
+
+        Tray users never see the terminal's "crec X is out" line, so without
+        this they would stay on whatever version they first installed.
+        """
+        from . import selfupdate
+
+        if not selfupdate.is_installed_app():
+            if force:
+                self._balloon("Updates", "This crec came from pip - update it with: pipx upgrade crec")
+            return
+        stamp = paths.data_dir() / "last-crec-update-check"
+        try:
+            if not force and time.time() - stamp.stat().st_mtime < 24 * 3600:
+                return
+        except OSError:
+            pass
+        try:
+            paths.ensure(stamp.parent)
+            stamp.write_text(str(time.time()), encoding="utf-8")
+        except OSError:
+            pass
+        self.update_announced = force
+        self.update_quiet = quiet
+
+        def look() -> None:
+            release = selfupdate.latest_release()
+            self.update_found = (
+                release.version if release and selfupdate.newer(release.version) else None
+            )
+            self.user32.PostMessageW(self.hwnd, self.WM_UPDATE_FOUND, 0, 0)
+
+        threading.Thread(target=look, daemon=True).start()
+
+    def _offer_update(self) -> None:
+        from . import __version__
+
+        self._refresh()
+        if self.update_found and not self.update_quiet:
+            self._balloon(
+                f"crec {self.update_found} is available",
+                f"You have {__version__}. Click here to update - it takes a few seconds.",
+                action=self._run_update,
+            )
+        elif self.update_announced:
+            self._balloon("crec is up to date", f"You have the latest version ({__version__}).")
+
+    def _run_update(self) -> None:
+        # `crec update` stops this tray and its swap script starts the new one.
+        subprocess.Popen(
+            _self_command("update"),
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
     def _finish(self) -> None:
         self.busy = False
         self.status = "ready"
@@ -585,6 +654,7 @@ class TrayApp:
                 self._balloon("Ready - paste it anywhere", f"{files[0].name}  ({size:.1f} MB)", target=files[0])
             else:
                 self._balloon("Ready - paste them anywhere", f"{len(files)} files", target=files[0] if files else None)
+            self._check_for_update(quiet=True)
         else:
             self.status = "last run failed"
             self._refresh("error")
@@ -608,6 +678,10 @@ class TrayApp:
         u.AppendMenuW(menu, MF_STRING, self.CMD_EDIT, "Edit presets and hotkeys")
         u.AppendMenuW(menu, MF_STRING, self.CMD_RELOAD, "Reload hotkeys")
         u.AppendMenuW(menu, MF_STRING, self.CMD_LOG, "Show log")
+        if self.update_found:
+            u.AppendMenuW(menu, MF_STRING, self.CMD_UPDATE, f"Update to crec {self.update_found}")
+        else:
+            u.AppendMenuW(menu, MF_STRING, self.CMD_UPDATE, "Check for updates")
         u.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         u.AppendMenuW(menu, MF_STRING | (MF_CHECKED if startup_enabled() else 0), self.CMD_STARTUP, "Start with Windows")
         u.AppendMenuW(menu, MF_STRING | (MF_CHECKED if self.paused else 0), self.CMD_PAUSE, "Pause hotkeys")
@@ -640,6 +714,11 @@ class TrayApp:
             _reveal(target, select=False)
         elif command == self.CMD_RELOAD:
             self._register_hotkeys(announce=True)
+        elif command == self.CMD_UPDATE:
+            if self.update_found:
+                self._run_update()
+            else:
+                self._check_for_update(force=True)
         elif command == self.CMD_LOG:
             if _log_file().exists():
                 _reveal(_log_file(), select=False)
@@ -665,13 +744,14 @@ class TrayApp:
                 event = lparam & 0xFFFF
                 if event in (0x007B, 0x0400, 0x0401):  # WM_CONTEXTMENU, NIN_SELECT, NIN_KEYSELECT
                     self._show_menu()
-                elif event == 0x0405 and self.balloon_target:  # NIN_BALLOONUSERCLICK
-                    from .cli import _reveal
-
-                    _reveal(self.balloon_target)
+                elif event == 0x0405 and self.balloon_action:  # NIN_BALLOONUSERCLICK
+                    self.balloon_action()
                 return 0
             if message == self.WM_JOB_DONE:
                 self._finish()
+                return 0
+            if message == self.WM_UPDATE_FOUND:
+                self._offer_update()
                 return 0
             if message == self.WM_STATUS:
                 if self.busy:
