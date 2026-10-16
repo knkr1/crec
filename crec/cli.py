@@ -887,6 +887,15 @@ class _UpdateCheck:
 
 
 def main() -> int:
+    # Titles are full of emoji. On Windows, output that isn't a console (a pipe,
+    # a file) uses the ANSI code page, which can't encode them - and printing the
+    # finished path crashed *after* a successful download. Degrade the odd
+    # character instead.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     deps.activate_ytdlp()
     try:
         return run(sys.argv[1:])

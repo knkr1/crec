@@ -365,6 +365,7 @@ def doctor(*, fix: bool) -> int:
             ok = False
             print(f"{name:<11} MISSING")
 
+    print(f"impersonate {_impersonation()}")
     print(f"clipboard   {clipboard.describe()}")
     print(f"downloads   {paths.downloads_dir()}")
     print(f"presets     {paths.user_presets_file()}")
@@ -382,6 +383,16 @@ def doctor(*, fix: bool) -> int:
         print("\nSomething is missing. Run: crec doctor --fix")
         return 1
     return 0
+
+
+def _impersonation() -> str:
+    """Whether yt-dlp can look like a real browser (TikTok requires it)."""
+    try:
+        import curl_cffi  # noqa: PLC0415
+
+        return f"available (curl_cffi {getattr(curl_cffi, '__version__', '?')})"
+    except Exception:
+        return "MISSING - TikTok and some other sites will fail (pip install curl_cffi)"
 
 
 def is_frozen() -> bool:

@@ -37,6 +37,10 @@ a = Analysis(
         "brotli",
         "certifi",
         "websockets",
+        "requests",
+        "yt_dlp_ejs",
+        # Browser impersonation; without it TikTok serves a bot-challenge page.
+        "curl_cffi",
     ],
     hookspath=[],
     runtime_hooks=[],

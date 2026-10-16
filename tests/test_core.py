@@ -1179,3 +1179,41 @@ def test_fetch_uses_the_saved_login_unless_cookies_is_given(jar_store, monkeypat
     assert seen[0][0] == "tiktok.com" and seen[0][1] is not None
     assert seen[1] == (None, None), "an explicit --cookies wins over the saved login"
     assert seen[2] == (None, None)
+
+
+# --------------------------------------------------------------------------- #
+# output robustness
+# --------------------------------------------------------------------------- #
+
+def test_tidy_strips_terminal_colours() -> None:
+    """In a real terminal yt-dlp colours ERROR:, which leaked as "crec: ERROR: ..."."""
+    from crec.download import _tidy
+
+    coloured = "\x1b[0;31mERROR:\x1b[0m [TikTok] 123: Unexpected response from webpage request; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues"
+    assert _tidy(coloured) == "[TikTok] 123: Unexpected response from webpage request"
+
+
+def test_emoji_output_does_not_crash_when_piped(tmp_path) -> None:
+    """Regression: printing a finished TikTok path ("... 🐧 ...mp4") to a pipe on
+    Windows raised UnicodeEncodeError after the download had succeeded."""
+    import os
+    import subprocess
+
+    env = {**os.environ, "LOCALAPPDATA": str(tmp_path), "APPDATA": str(tmp_path),
+           "XDG_DATA_HOME": str(tmp_path), "CREC_NO_UPDATE_CHECK": "1"}
+    env.pop("PYTHONIOENCODING", None)
+    env.pop("PYTHONUTF8", None)
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.argv = ['crec', 'cookies', 'remove', 'linux\U0001f427.example']; "
+         "from crec.cli import main; sys.exit(main())"],
+        cwd=Path(__file__).resolve().parents[1], env=env, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert b"nothing saved for" in result.stdout
+
+
+def test_doctor_reports_impersonation() -> None:
+    from crec.deps import _impersonation
+
+    assert _impersonation().startswith(("available", "MISSING"))

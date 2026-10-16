@@ -11,6 +11,7 @@ the functions here rather than sitting at module scope.
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -471,8 +472,13 @@ def _forget_ytdlp() -> None:
         del sys.modules[name]
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _tidy(message: str) -> str:
-    text = message.replace("ERROR: ", "").strip()
+    # In a real terminal yt-dlp colours "ERROR:", which left it in crec's
+    # message: "crec: ERROR: [TikTok] ...". Strip the codes first.
+    text = _ANSI.sub("", message).replace("ERROR: ", "").strip()
     for noise in (
         "; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues",
         " Confirm you are on the latest version using  yt-dlp -U",
