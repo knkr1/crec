@@ -339,7 +339,7 @@ class TrayApp:
     WM_UPDATE_FOUND = 0x8000 + 4
 
     # menu command ids; hotkey items use HOTKEY_BASE + index
-    CMD_OPEN, CMD_EDIT, CMD_RELOAD, CMD_STARTUP, CMD_PAUSE, CMD_QUIT, CMD_LOG, CMD_UPDATE = range(1, 9)
+    CMD_OPEN, CMD_EDIT, CMD_RELOAD, CMD_STARTUP, CMD_PAUSE, CMD_QUIT, CMD_LOG, CMD_UPDATE, CMD_COOKIES = range(1, 10)
     HOTKEY_BASE = 100
 
     def __init__(self) -> None:
@@ -583,6 +583,23 @@ class TrayApp:
         self.status = text
         self.user32.PostMessageW(self.hwnd, self.WM_STATUS, 0, 0)
 
+    def _import_cookies(self) -> None:
+        """The extension's Copy button, then this: no terminal needed."""
+        from . import clipboard, cookies
+
+        try:
+            copied = clipboard.read_files()
+            text = copied[0].read_text(encoding="utf-8", errors="replace") if copied else clipboard.read_text()
+            stored = cookies.add(text or "")
+        except (CrecError, OSError) as exc:
+            self._balloon("No cookies imported", str(exc), error=True)
+            return
+        sites = ", ".join(entry.site for entry in stored)
+        self._balloon(
+            f"Saved your {sites} login",
+            f"crec will use it for {sites} downloads, and only for {sites}.",
+        )
+
     # --- crec's own updates -------------------------------------------------
 
     def _check_for_update(self, *, force: bool = False, quiet: bool = False) -> None:
@@ -677,6 +694,7 @@ class TrayApp:
         u.AppendMenuW(menu, MF_STRING, self.CMD_OPEN, "Open crec folder")
         u.AppendMenuW(menu, MF_STRING, self.CMD_EDIT, "Edit presets and hotkeys")
         u.AppendMenuW(menu, MF_STRING, self.CMD_RELOAD, "Reload hotkeys")
+        u.AppendMenuW(menu, MF_STRING, self.CMD_COOKIES, "Import cookies from clipboard")
         u.AppendMenuW(menu, MF_STRING, self.CMD_LOG, "Show log")
         if self.update_found:
             u.AppendMenuW(menu, MF_STRING, self.CMD_UPDATE, f"Update to crec {self.update_found}")
@@ -714,6 +732,8 @@ class TrayApp:
             _reveal(target, select=False)
         elif command == self.CMD_RELOAD:
             self._register_hotkeys(announce=True)
+        elif command == self.CMD_COOKIES:
+            self._import_cookies()
         elif command == self.CMD_UPDATE:
             if self.update_found:
                 self._run_update()

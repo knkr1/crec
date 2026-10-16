@@ -22,7 +22,7 @@ from .errors import CrecError
 from .options import PRIMITIVES, Options
 
 _URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-SUBCOMMANDS = {"update", "doctor", "presets", "tray", "uninstall"}
+SUBCOMMANDS = {"update", "doctor", "presets", "tray", "uninstall", "cookies"}
 
 
 # --------------------------------------------------------------------------- #
@@ -60,6 +60,7 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
             "  crec presets [--edit]       list presets / open your presets file\n"
             "  crec tray                   hotkeys + tray icon, no terminal needed (Windows)\n"
             "  crec uninstall              remove crec (keeps your downloads and presets)\n"
+            "  crec cookies add [FILE]     save a site's login (cookies.txt, or the clipboard)\n"
         ),
     )
 
@@ -612,6 +613,68 @@ def cmd_presets(argv: list[str]) -> int:
     return 0
 
 
+def cmd_cookies(argv: list[str]) -> int:
+    from . import cookies  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(
+        prog="crec cookies",
+        description="Saved logins for sites that need one. Each site's cookies are kept "
+                    "separately, encrypted, and only ever sent to that site.",
+    )
+    sub = parser.add_subparsers(dest="action")
+    adding = sub.add_parser("add", help="save cookies from a cookies.txt file or the clipboard")
+    adding.add_argument("file", nargs="?", help="cookies.txt (default: the clipboard)")
+    adding.add_argument("--site", help="keep this site from an export that holds several")
+    removing = sub.add_parser("remove", help="forget a site's saved login")
+    removing.add_argument("site")
+    sub.add_parser("list", help="show saved logins (the default)")
+    args = parser.parse_args(argv)
+
+    if args.action == "add":
+        if args.file:
+            source = Path(args.file).expanduser()
+            if not source.is_file():
+                raise CrecError(f"No such file: {source}")
+            text = source.read_text(encoding="utf-8", errors="replace")
+        else:
+            copied = clipboard.read_files()
+            text = (
+                copied[0].read_text(encoding="utf-8", errors="replace")
+                if copied else clipboard.read_text()
+            )
+            if not text:
+                raise CrecError(
+                    "The clipboard is empty. In the \"Get cookies.txt LOCALLY\" extension, "
+                    "press Copy on the site's page, then run this again (or pass the file)."
+                )
+        for entry in cookies.add(text, site=args.site):
+            print(f"saved {entry.site} ({entry.count} cookies) - used automatically for {entry.site}")
+        if args.file:
+            print(f"You can delete {source} now; crec keeps its own encrypted copy.")
+        return 0
+
+    if args.action == "remove":
+        site = cookies.site_of(args.site)
+        print(f"forgot {site}" if cookies.remove(site) else f"nothing saved for {site}")
+        return 0
+
+    entries = cookies.saved()
+    if not entries:
+        print("No saved logins. To add one: export a site's cookies with the \"Get cookies.txt\n"
+              "LOCALLY\" browser extension, then run: crec cookies add")
+        return 0
+    import time as _time  # noqa: PLC0415
+
+    def day(stamp: float) -> str:
+        return _time.strftime("%Y-%m-%d", _time.localtime(stamp))
+
+    for entry in entries:
+        used = f"last used {day(entry.used)}" if entry.used else "not used yet"
+        print(f"  {entry.site:<20} {entry.count:>3} cookies   saved {day(entry.added)}   {used}")
+    print("\nA login stops working when the site ends the session; crec will say so.")
+    return 0
+
+
 def _reveal(path: Path, *, select: bool = True) -> None:
     """Show *path* in the file manager, or open it if ``select`` is false."""
     try:
@@ -644,6 +707,8 @@ def run(argv: list[str]) -> int:
             return cmd_presets(rest)
         if command == "doctor":
             return deps.doctor(fix="--fix" in rest)
+        if command == "cookies":
+            return cmd_cookies(rest)
         if command == "uninstall":
             from .selfupdate import uninstall  # noqa: PLC0415
 

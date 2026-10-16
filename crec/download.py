@@ -14,9 +14,11 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import cookies as saved_cookies
 from . import deps, media
 from .errors import CrecError, ExtractorFailure
 from .options import Options
@@ -249,19 +251,29 @@ def _needs_login(message: str) -> bool:
     return any(signature in lowered for signature in _LOGIN_SIGNATURES)
 
 
-def _login_help(url: str, cookies: str | None) -> str:
-    """What to tell someone whose download needs a login."""
-    from urllib.parse import urlparse
+@contextmanager
+def _nothing():
+    yield None
 
-    site = urlparse(url).hostname or "this site"
-    site = site.removeprefix("www.").removeprefix("m.")
+
+def _login_help(url: str, cookies: str | None, *, saved_site: str | None = None) -> str:
+    """What to tell someone whose download needs a login."""
+    site = saved_cookies.site_of_url(url) or "this site"
+    if saved_site:
+        return (
+            f"{site} still wants a login - your saved {site} login has probably expired.\n"
+            f"Log in to {site} in your browser, export its cookies again, then run:\n"
+            f"  crec cookies add"
+        )
     if not cookies:
         return (
-            f"{site} wants you logged in. If you are logged in in your browser, "
-            f"crec can borrow that:\n"
-            f"  crec --cookies firefox          (or chrome, edge, brave, safari...)\n"
-            f"To make it permanent, run `crec presets --edit` and add under [defaults]:\n"
-            f'  cookies = "firefox"'
+            f"{site} wants you logged in. Give crec your login once:\n"
+            f"  1. Log in to {site} in your browser.\n"
+            f"  2. On {site}, export its cookies with the \"Get cookies.txt LOCALLY\"\n"
+            f"     extension (Copy, or Export).\n"
+            f"  3. Run: crec cookies add      (reads the clipboard, or pass the file)\n"
+            f"crec keeps only {site}'s cookies, encrypted, and uses them just for {site}.\n"
+            f"On Firefox you can skip the export: crec --cookies firefox"
         )
     return (
         f"{site} still wants a login, even with cookies from '{cookies}'. Make sure "
@@ -385,11 +397,37 @@ def fetch(
     *,
     allow_update_retry: bool = True,
 ) -> list[Downloaded]:
-    """Download *url*, auto-updating yt-dlp once if the site looks broken."""
+    """Download *url*, auto-updating yt-dlp once if the site looks broken.
+
+    Without ``--cookies``, a login saved with `crec cookies add` for this
+    site is used automatically.
+    """
+    if options.cookies:
+        return _fetch(url, options, output_dir, progress, allow_update_retry, saved_site=None)
+    with saved_cookies.lent_to_ytdlp(url) as jar:
+        return _fetch(
+            url, options, output_dir, progress, allow_update_retry,
+            saved_site=saved_cookies.site_of_url(url) if jar else None,
+            jar=jar,
+        )
+
+
+def _fetch(
+    url: str,
+    options: Options,
+    output_dir: Path,
+    progress: Progress,
+    allow_update_retry: bool,
+    *,
+    saved_site: str | None,
+    jar: Path | None = None,
+) -> list[Downloaded]:
     deps.activate_ytdlp()
     import yt_dlp  # noqa: PLC0415 - must follow activate_ytdlp()
 
     opts = build_ydl_opts(options, output_dir, progress)
+    if jar:
+        opts["cookiefile"] = str(jar)
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -403,7 +441,7 @@ def fetch(
             raise CrecError(_tidy(str(exc))) from exc
         message = str(exc)
         if _needs_login(message):
-            raise CrecError(_login_help(url, options.cookies)) from exc
+            raise CrecError(_login_help(url, options.cookies, saved_site=saved_site)) from exc
         if allow_update_retry and _looks_stale(message):
             # This is the moment an update is worth its latency: the site just
             # broke, so a stale extractor is the single likeliest cause.
@@ -413,7 +451,9 @@ def fetch(
             print(note, file=sys.stderr)
             if changed:
                 _forget_ytdlp()
-                return fetch(url, options, output_dir, progress, allow_update_retry=False)
+                return _fetch(
+                    url, options, output_dir, progress, False, saved_site=saved_site, jar=jar
+                )
         raise ExtractorFailure(_tidy(message)) from exc
 
     if info is None:
@@ -460,10 +500,13 @@ def peek(url: str, *, cookies: str | None = None) -> Peek | None:
     import yt_dlp
 
     opts = {"quiet": True, "no_warnings": True, "skip_download": True, "logger": _SilentLogger()}
-    opts.update(cookie_opts(cookies))
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        opts.update(cookie_opts(cookies))
+        with saved_cookies.lent_to_ytdlp(url) if not cookies else _nothing() as jar:
+            if jar:
+                opts["cookiefile"] = str(jar)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
     except Exception:
         return None
 

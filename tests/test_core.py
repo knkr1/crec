@@ -801,10 +801,13 @@ def test_login_help_names_the_site_and_the_fix() -> None:
     from crec.download import _login_help
 
     first = _login_help("https://www.tiktok.com/@a/video/1", None)
-    assert "tiktok.com" in first and "--cookies firefox" in first and 'cookies = "firefox"' in first
+    assert "tiktok.com" in first and "crec cookies add" in first and "--cookies firefox" in first
 
     again = _login_help("https://www.tiktok.com/@a/video/1", "firefox")
     assert "even with cookies" in again
+
+    expired = _login_help("https://vm.tiktok.com/x", None, saved_site="tiktok.com")
+    assert "saved tiktok.com login has probably expired" in expired
 
 
 def test_cookie_read_help_only_blames_locking_when_it_is_locking(monkeypatch) -> None:
@@ -1046,3 +1049,133 @@ def test_download_progress_is_one_line_when_not_a_terminal(monkeypatch, tmp_path
     deps._download(source.as_uri(), tmp_path / "copy.bin", label="blob", quiet=False)
     assert capsys.readouterr().err == "fetching blob...\n"
     assert (tmp_path / "copy.bin").read_bytes() == source.read_bytes()
+
+
+# --------------------------------------------------------------------------- #
+# the saved-login store
+# --------------------------------------------------------------------------- #
+
+FUTURE = 4_102_444_800  # 2100-01-01
+
+
+def _export(*rows: tuple[str, str, str, int]) -> str:
+    """A Netscape cookies.txt, as the browser extension writes it."""
+    lines = ["# Netscape HTTP Cookie File", "# exported by an extension", ""]
+    for domain, name, value, expires in rows:
+        prefix = "#HttpOnly_" if name == "sessionid" else ""
+        lines.append(f"{prefix}{domain}\tTRUE\t/\tTRUE\t{expires}\t{name}\t{value}")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.fixture
+def jar_store(monkeypatch, tmp_path):
+    from crec import cookies
+
+    monkeypatch.setattr(cookies.paths, "data_dir", lambda: tmp_path)
+    return cookies
+
+
+@pytest.mark.parametrize(
+    ("host", "site"),
+    [
+        ("www.tiktok.com", "tiktok.com"), (".tiktok.com", "tiktok.com"), ("vm.tiktok.com", "tiktok.com"),
+        ("twitter.com", "x.com"), ("youtu.be", "youtube.com"), ("www.bbc.co.uk", "bbc.co.uk"),
+    ],
+)
+def test_site_of(host: str, site: str) -> None:
+    from crec.cookies import site_of
+
+    assert site_of(host) == site
+
+
+def test_parse_reads_httponly_lines_and_skips_comments() -> None:
+    from crec.cookies import parse
+
+    jar = parse(_export((".tiktok.com", "sessionid", "abc", FUTURE), (".tiktok.com", "tt_csrf", "x", 0)))
+    assert [(c.name, c.http_only) for c in jar] == [("sessionid", True), ("tt_csrf", False)]
+
+
+def test_parse_rejects_something_that_is_not_an_export() -> None:
+    from crec.cookies import parse
+
+    with pytest.raises(CrecError, match="Get cookies.txt"):
+        parse("https://www.tiktok.com/@someone/video/123")
+
+
+def test_add_keeps_one_site_and_encrypts_it(jar_store) -> None:
+    saved = jar_store.add(_export((".tiktok.com", "sessionid", "SECRET-SESSION", FUTURE)))
+    assert [(s.site, s.count) for s in saved] == [("tiktok.com", 1)]
+
+    on_disk = (jar_store.store_dir() / "tiktok.com.json").read_text(encoding="utf-8")
+    if sys.platform == "win32":
+        assert "SECRET" not in on_disk and "U0VDUkVU" not in on_disk  # not plain, not base64-plain
+    assert jar_store.has_login_for("https://www.tiktok.com/@a/video/1") == "tiktok.com"
+    assert jar_store.has_login_for("https://www.youtube.com/watch?v=x") is None
+
+
+def test_add_refuses_a_whole_browser_jar(jar_store) -> None:
+    """The point is to keep only what a download needs."""
+    everything = _export(
+        (".tiktok.com", "sessionid", "a", FUTURE),
+        (".google.com", "SID", "b", FUTURE),
+        (".bank.example", "auth", "c", FUTURE),
+    )
+    with pytest.raises(CrecError, match="3 sites"):
+        jar_store.add(everything)
+    assert jar_store.saved() == []
+
+    picked = jar_store.add(everything, site="www.tiktok.com")
+    assert [s.site for s in picked] == ["tiktok.com"]
+    assert jar_store.has_login_for("https://accounts.google.com") is None
+
+
+def test_add_drops_expired_cookies(jar_store) -> None:
+    saved = jar_store.add(_export((".x.com", "auth_token", "a", FUTURE), (".x.com", "old", "b", 1000)))
+    assert saved[0].count == 1
+    with pytest.raises(CrecError, match="expired"):
+        jar_store.add(_export((".x.com", "old", "b", 1000)))
+
+
+def test_saved_login_is_lent_then_refreshed_then_removed(jar_store) -> None:
+    """yt-dlp rewrites the jar on exit; keep this site's refreshed values only."""
+    jar_store.add(_export((".tiktok.com", "sessionid", "old-value", FUTURE)))
+
+    with jar_store.lent_to_ytdlp("https://www.tiktok.com/@a/video/1") as path:
+        assert "old-value" in path.read_text(encoding="utf-8")
+        # What yt-dlp's save_cookies() leaves behind: a refreshed session and a
+        # cookie some CDN set along the way.
+        path.write_text(_export(
+            (".tiktok.com", "sessionid", "new-value", FUTURE),
+            (".tiktokcdn.com", "tracker", "zzz", FUTURE),
+        ), encoding="utf-8")
+        handed = path
+
+    assert not handed.exists(), "the plaintext hand-off file must not outlive the download"
+    with jar_store.lent_to_ytdlp("https://tiktok.com/x") as path:
+        text = path.read_text(encoding="utf-8")
+    assert "new-value" in text and "old-value" not in text and "tracker" not in text
+
+
+def test_nothing_is_lent_to_other_sites(jar_store) -> None:
+    jar_store.add(_export((".tiktok.com", "sessionid", "a", FUTURE)))
+    with jar_store.lent_to_ytdlp("https://www.youtube.com/watch?v=x") as path:
+        assert path is None
+
+
+def test_fetch_uses_the_saved_login_unless_cookies_is_given(jar_store, monkeypatch, tmp_path) -> None:
+    from crec import download
+
+    jar_store.add(_export((".tiktok.com", "sessionid", "a", FUTURE)))
+    seen: list = []
+    monkeypatch.setattr(
+        download, "_fetch",
+        lambda url, options, out, progress, retry, *, saved_site, jar=None: seen.append((saved_site, jar)) or [],
+    )
+    progress = download.Progress(enabled=False)
+    download.fetch("https://www.tiktok.com/@a/video/1", Options(), tmp_path, progress)
+    download.fetch("https://www.tiktok.com/@a/video/1", Options(cookies="firefox"), tmp_path, progress)
+    download.fetch("https://www.youtube.com/watch?v=x", Options(), tmp_path, progress)
+
+    assert seen[0][0] == "tiktok.com" and seen[0][1] is not None
+    assert seen[1] == (None, None), "an explicit --cookies wins over the saved login"
+    assert seen[2] == (None, None)
