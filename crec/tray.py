@@ -172,10 +172,19 @@ def run_job(flags: str, on_status) -> list[Path]:
 # launching, stopping, start-with-Windows
 # --------------------------------------------------------------------------- #
 
-def _self_command(*args: str) -> list[str]:
-    """A command line that reaches this same crec from any working directory."""
+def _self_command(*args: str, windowed: bool = False) -> list[str]:
+    """A command line that reaches this same crec from any working directory.
+
+    ``windowed`` picks the console-less twin (crecw.exe, or pythonw.exe from
+    source) so a background tray never shows a console window, not even at login.
+    """
+    executable = Path(sys.executable)
+    if windowed:
+        twin = executable.with_name("crecw.exe" if getattr(sys, "frozen", False) else "pythonw.exe")
+        if twin.is_file():
+            executable = twin
     if getattr(sys, "frozen", False):
-        return [sys.executable, *args]
+        return [str(executable), *args]
     # Not `-m crec`: that resolves against the working directory first, and the
     # user's home holds ~/crec - the downloads folder - which Python happily
     # imports as an empty namespace package. Pin the real package's location.
@@ -184,7 +193,24 @@ def _self_command(*args: str) -> list[str]:
         f"import sys; sys.path.insert(0, {root!r}); "
         "from crec.cli import main; sys.exit(main())"
     )
-    return [sys.executable, "-c", bootstrap, *args]
+    return [str(executable), "-c", bootstrap, *args]
+
+
+def _hide_child_consoles() -> None:
+    """Make every subprocess this process starts windowless.
+
+    The tray runs without a console, so each console program it starts -
+    ffmpeg, and the ffmpeg yt-dlp starts for merging - would otherwise pop up a
+    console window of its own. crec's own calls already pass CREATE_NO_WINDOW;
+    yt-dlp's do not, and it is not ours to patch, so set it at the source.
+    """
+    original = subprocess.Popen.__init__
+
+    def init(self, *args, **kwargs):
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        original(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = init
 
 
 def _find_window() -> int:
@@ -212,7 +238,7 @@ def set_startup(enabled: bool) -> None:
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
         if enabled:
-            command = subprocess.list2cmdline(_self_command("tray"))
+            command = subprocess.list2cmdline(_self_command("tray", "--run", windowed=True))
             winreg.SetValueEx(key, RUN_VALUE, 0, winreg.REG_SZ, command)
         else:
             try:
@@ -257,6 +283,9 @@ def cmd_tray(argv: list[str]) -> int:
         return 0
 
     if args.run:
+        if _find_window():
+            return 0  # already running - e.g. started at login and again by hand
+        _hide_child_consoles()
         return TrayApp().run()
 
     if _find_window():
@@ -267,11 +296,9 @@ def cmd_tray(argv: list[str]) -> int:
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
 
-    # Relaunch without a visible console. CREATE_NO_WINDOW rather than
-    # DETACHED_PROCESS: the child keeps a hidden console, which ffmpeg and
-    # friends inherit - otherwise each of them would flash a window of its own.
+    # Relaunch in the background with no console, detached from this terminal.
     subprocess.Popen(
-        _self_command("tray", "--run"),
+        _self_command("tray", "--run", windowed=True),
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         cwd=str(Path.home()), close_fds=True,

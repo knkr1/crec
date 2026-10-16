@@ -1,4 +1,13 @@
-# PyInstaller spec for the single-file crec.exe.
+# PyInstaller spec for crec: a folder holding crec.exe, crecw.exe and _internal/.
+#
+# A folder (onedir), not a single self-extracting exe. Onefile unpacks itself to
+# a temp directory on every run - one to two seconds before anything happens,
+# more with antivirus scanning each extraction - and self-extracting exes are a
+# classic antivirus false positive. A tool you run constantly cannot afford it.
+#
+# Two exes share one _internal/: crec.exe is the console program; crecw.exe is
+# identical but windowless, for the tray, so starting it at login flashes no
+# console window.
 #
 # yt-dlp IS bundled, so a fresh install works offline straight away. It is still
 # overridable at runtime: crec prepends its own writable lib directory to
@@ -47,23 +56,35 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe = EXE(
-    pyz,
-    a.scripts,
+
+def make_exe(name, console):
+    return EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name=name,
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,  # UPX-packed exes trip antivirus heuristics; not worth the MB.
+        console=console,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        icon="crec/assets/crec.ico",
+    )
+
+
+coll = COLLECT(
+    make_exe("crec", console=True),
+    make_exe("crecw", console=False),
     a.binaries,
     a.zipfiles,
     a.datas,
-    [],
-    name="crec",
-    debug=False,
-    bootloader_ignore_signals=False,
     strip=False,
-    upx=False,  # UPX-packed exes trip antivirus heuristics; not worth the MB.
-    console=True,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon="crec/assets/crec.ico",
+    upx=False,
+    name="crec",
 )
