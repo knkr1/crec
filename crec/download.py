@@ -257,6 +257,14 @@ def _nothing():
     yield None
 
 
+def _add_js_runtime(opts: dict, url: str) -> None:
+    """Give yt-dlp a JS runtime; download one only for YouTube, which needs it."""
+    site = saved_cookies.site_of_url(url)
+    runtimes = deps.js_runtimes(fetch=site == "youtube.com")
+    if runtimes:
+        opts["js_runtimes"] = runtimes
+
+
 def _login_help(url: str, cookies: str | None, *, saved_site: str | None = None) -> str:
     """What to tell someone whose download needs a login."""
     site = saved_cookies.site_of_url(url) or "this site"
@@ -429,6 +437,7 @@ def _fetch(
     opts = build_ydl_opts(options, output_dir, progress)
     if jar:
         opts["cookiefile"] = str(jar)
+    _add_js_runtime(opts, url)
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -511,6 +520,7 @@ def peek(url: str, *, cookies: str | None = None) -> Peek | None:
         with saved_cookies.lent_to_ytdlp(url) if not cookies else _nothing() as jar:
             if jar:
                 opts["cookiefile"] = str(jar)
+            _add_js_runtime(opts, url)
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
     except Exception:

@@ -283,8 +283,16 @@ def cmd_tray(argv: list[str]) -> int:
         return 0
 
     if args.run:
-        if _find_window():
-            return 0  # already running - e.g. started at login and again by hand
+        window = _find_window()
+        if window:
+            # Already running - started at login, then clicked in the Start menu.
+            # Silently doing nothing would look broken, so have it say hello.
+            import ctypes
+
+            user32 = ctypes.WinDLL("user32")
+            user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+            user32.PostMessageW(window, TrayApp.WM_PING, 0, 0)
+            return 0
         _hide_child_consoles()
         return TrayApp().run()
 
@@ -337,6 +345,7 @@ class TrayApp:
     WM_JOB_DONE = 0x8000 + 2
     WM_STATUS = 0x8000 + 3
     WM_UPDATE_FOUND = 0x8000 + 4
+    WM_PING = 0x8000 + 5  # a second launch asking us to show ourselves
 
     # menu command ids; hotkey items use HOTKEY_BASE + index
     CMD_OPEN, CMD_EDIT, CMD_RELOAD, CMD_STARTUP, CMD_PAUSE, CMD_QUIT, CMD_LOG, CMD_UPDATE, CMD_COOKIES = range(1, 10)
@@ -769,6 +778,13 @@ class TrayApp:
                 return 0
             if message == self.WM_JOB_DONE:
                 self._finish()
+                return 0
+            if message == self.WM_PING:
+                keys = ", ".join(h.label for h in self.hotkeys) or "none configured"
+                self._balloon(
+                    "crec is already running",
+                    f"Copy a link or a file and press {keys}. Right-click this icon for more.",
+                )
                 return 0
             if message == self.WM_UPDATE_FOUND:
                 self._offer_update()

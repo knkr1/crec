@@ -84,7 +84,8 @@ irm https://raw.githubusercontent.com/knkr1/crec/main/install.ps1 | iex
 
 It grabs the latest release, checks it against the published SHA256, puts it in
 `%LOCALAPPDATA%\Programs\crec`, and adds that to your PATH so you can just type `crec`.
-No admin rights and nothing else to install. On a first install it also offers to turn on
+No admin rights and nothing else to install. It also fetches ffmpeg and YouTube support up
+front (see below), adds **crec** to the Start menu, and on a first install offers to turn on
 the [hotkeys](#hotkeys-and-the-tray), so you may never need the terminal again.
 
 To upgrade later, run `crec update` (or the same command again). Upgrading while the tray
@@ -122,6 +123,12 @@ instead. `crec doctor` will tell you what it found.
 It fetches ffmpeg rather than bundling it partly to keep the download small, and partly
 because ffmpeg is GPL — as long as crec never ships a copy, that stays ffmpeg's
 licensing situation and not crec's.
+
+YouTube needs one more thing: a JavaScript runtime. YouTube hides its video URLs behind
+JavaScript challenges, and yt-dlp now solves them by running YouTube's own code. If you
+already have a recent [Node](https://nodejs.org) (22+) or [deno](https://deno.com), crec
+uses it. Otherwise it downloads deno once (about 40 MB) the first time you grab something
+from YouTube, and never for other sites. `crec doctor` shows which one it's using.
 
 ---
 
