@@ -46,9 +46,11 @@ jobs:
       - run: pyinstaller crec.spec --noconfirm
       - name: Verify the frozen build actually runs
         run: |
-          .\dist\crec.exe --version
-          .\dist\crec.exe presets
+          .\dist\crec\crec.exe --version
+          .\dist\crec\crec.exe presets
+          if (-not (Test-Path .\dist\crec\crecw.exe)) { throw "crecw.exe missing" }
+      - run: Compress-Archive -Path dist\crec\* -DestinationPath crec-windows-x64.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: crec-exe
-          path: dist/crec.exe
+          name: crec-windows-x64
+          path: crec-windows-x64.zip

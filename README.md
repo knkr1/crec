@@ -82,16 +82,23 @@ Open PowerShell and paste this:
 irm https://raw.githubusercontent.com/knkr1/crec/main/install.ps1 | iex
 ```
 
-It grabs the latest `crec.exe`, checks it against the published SHA256, puts it in
+It grabs the latest release, checks it against the published SHA256, puts it in
 `%LOCALAPPDATA%\Programs\crec`, and adds that to your PATH so you can just type `crec`.
-No admin rights and nothing else to install. Running it again upgrades in place.
+No admin rights and nothing else to install. On a first install it also offers to turn on
+the [hotkeys](#hotkeys-and-the-tray), so you may never need the terminal again.
+
+To upgrade later, run `crec update` (or the same command again). Upgrading while the tray
+is running is fine; it gets stopped and started again around the swap.
 
 You'll need to open a new terminal afterwards, because PATH changes don't reach windows
 that are already open.
 
-If you'd rather do it by hand, the exe is on the
-[releases page](https://github.com/knkr1/crec/releases) — download it and put it in a
-folder that's on your PATH.
+If you'd rather do it by hand, download `crec-windows-x64.zip` from the
+[releases page](https://github.com/knkr1/crec/releases), unzip it anywhere, and put that
+folder on your PATH. It's a folder rather than a single exe on purpose: a single-file exe
+unpacks itself on every run, which made each `crec` take about 0.8s to start instead of
+0.1s, and self-unpacking exes are a classic antivirus false positive. `crecw.exe` in there
+is the same program without a console window; the tray uses it.
 
 Either way, Windows will show a "Windows protected your PC" box the first time, because
 the exe isn't code-signed. Click "More info", then "Run anyway". Making that go away

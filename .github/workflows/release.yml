@@ -22,26 +22,34 @@ jobs:
       - run: pyinstaller crec.spec --noconfirm
       - name: Verify before publishing
         run: |
-          .\dist\crec.exe --version
-          .\dist\crec.exe presets
-      - name: Checksum
-        run: |
-          $hash = (Get-FileHash dist\crec.exe -Algorithm SHA256).Hash
-          "$hash  crec.exe" | Out-File -FilePath dist\crec.exe.sha256 -Encoding utf8
-          echo "sha256=$hash" >> $env:GITHUB_OUTPUT
+          .\dist\crec\crec.exe --version
+          .\dist\crec\crec.exe presets
+          if (-not (Test-Path .\dist\crec\crecw.exe)) { throw "crecw.exe missing" }
+      - name: Zip and checksum
         id: sum
+        run: |
+          Compress-Archive -Path dist\crec\* -DestinationPath crec-windows-x64.zip
+          $hash = (Get-FileHash crec-windows-x64.zip -Algorithm SHA256).Hash
+          "$hash  crec-windows-x64.zip" | Out-File -FilePath crec-windows-x64.zip.sha256 -Encoding ascii
+          echo "sha256=$hash" >> $env:GITHUB_OUTPUT
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/crec.exe
-            dist/crec.exe.sha256
+            crec-windows-x64.zip
+            crec-windows-x64.zip.sha256
           body: |
-            **Windows:** download `crec.exe` below and put it anywhere on your `PATH`.
-            No Python required. ffmpeg is fetched automatically on first use.
+            **Windows:** paste this into PowerShell. It installs crec (no Python needed),
+            puts it on your PATH, and offers to turn on the hotkeys:
+
+            ```powershell
+            irm https://raw.githubusercontent.com/knkr1/crec/main/install.ps1 | iex
+            ```
+
+            Already have crec 2.1 or newer? Run `crec update`.
 
             **Anywhere else:** `pipx install crec`
 
-            SHA256: `${{ steps.sum.outputs.sha256 }}`
+            SHA256 (`crec-windows-x64.zip`): `${{ steps.sum.outputs.sha256 }}`
           generate_release_notes: true
 
   pypi:
