@@ -439,29 +439,58 @@ each time is written to `tray.log` (**Show log** in the menu).
 
 TikTok, Instagram and X increasingly refuse to hand over videos to anyone not logged in,
 and YouTube does the same for age-restricted videos and its "confirm you're not a bot"
-check. When that happens crec says so, and tells you the fix:
+check. When that happens crec says so, and tells you the fix.
+
+A site knows it's you because of a cookie your browser got when you logged in. Whoever
+sends that cookie *is* you, to that site. So crec lets you hand over one site's login at
+a time, and nothing else.
+
+### Saving a login (works with any browser)
+
+1. Log in to the site in your browser.
+2. Install the **[Get cookies.txt LOCALLY](https://github.com/kairi003/Get-cookies.txt-LOCALLY)**
+   extension (open source, and the one yt-dlp recommends; avoid the older "Get cookies.txt",
+   which was pulled for being malware). On the site, click it and press **Copy**.
+3. Run:
+
+```bash
+crec cookies add          # reads the clipboard (or: crec cookies add cookies.txt)
+```
+
+Or skip the terminal: **Import cookies from clipboard** in the tray menu.
+
+From then on, downloads from that site just work. What crec does with it:
+
+- **Keeps only that site's cookies.** If the export holds several sites, crec refuses
+  rather than storing your whole browser; pick one with `--site tiktok.com`.
+- **Encrypts them** with your Windows login (DPAPI), one file per site, so other users and
+  other apps can't read them.
+- **Sends them only to that site.** A saved TikTok login is never offered to YouTube.
+- **Keeps them fresh.** When a site refreshes your session during a download, crec keeps
+  the new values, so a login lasts about as long as it would in your browser. When it
+  finally does expire, crec says so and you export it again.
+
+```bash
+crec cookies                     # what's saved, and when it was last used
+crec cookies remove tiktok.com   # forget a login
+```
+
+### Borrowing straight from a browser
 
 ```bash
 crec --cookies firefox            # borrow your Firefox logins for this run
 crec --cookies "chrome:Profile 1" # a specific browser profile
-crec --cookies ~/cookies.txt      # or a Netscape-format cookies file
+crec --cookies ~/cookies.txt      # or a cookies.txt file, used as-is
 ```
 
-To make it stick, run `crec presets --edit` and add it to `[defaults]`:
+`--cookies` overrides a saved login for that run. To make it the default, add
+`cookies = "firefox"` under `[defaults]` in `crec presets --edit`.
 
-```toml
-[defaults]
-cookies = "firefox"
-```
-
-crec never reads your browser on its own. It only does when you ask, and the cookies go
-to the site you're downloading from and nowhere else.
-
-**Use Firefox on Windows if you can.** Chrome, Edge and other Chromium browsers lock their
-cookie database while they're open, and since Chrome 127 they encrypt cookies so that
-only the browser itself can read them. crec will tell you when that's what went wrong,
-but often the only fix is closing the browser completely, or exporting a cookies.txt with
-a browser extension.
+This reads the browser's whole cookie jar (yt-dlp still only sends each site its own
+cookies). **On Windows it mostly works only with Firefox.** Chrome, Edge and other
+Chromium browsers lock their cookie database while open, and since Chrome 127 they
+encrypt cookies so only the browser itself can read them. That is exactly why saved
+logins exist.
 
 ---
 
