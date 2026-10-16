@@ -19,10 +19,16 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
-# Deliberately minimal. ffmpeg is fetched at runtime (never redistributed, so its
-# GPL never becomes our problem) and the clipboard is pure ctypes, so a frozen
-# onefile build stays small and has nothing to go wrong at import time.
-dependencies = ["yt-dlp>=2025.1.1"]
+# ffmpeg is fetched at runtime (never redistributed, so its GPL never becomes our
+# problem) and the clipboard is pure ctypes.
+#
+# yt-dlp's own recommended extras, though, are not optional in practice:
+# - default:   mutagen, brotli, websockets, pycryptodomex, ... - plain "yt-dlp"
+#              has none, and the frozen build silently shipped without them.
+# - curl-cffi: browser impersonation. TikTok answers anything that doesn't look
+#              like a real browser with a bot-challenge page, and the download
+#              fails with "Unexpected response from webpage request".
+dependencies = ["yt-dlp[default,curl-cffi]>=2025.1.1"]
 
 [project.urls]
 Homepage = "https://github.com/knkr1/crec"
