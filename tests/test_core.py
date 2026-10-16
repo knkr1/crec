@@ -730,3 +730,119 @@ def test_paths_in_text_handles_multiple_quoted_lines(tmp_path) -> None:
     a, b = _video(tmp_path, "a.mp4"), _video(tmp_path, "b.mp4")
     text = f'"{a}"\r\n"{b}"\r\n"{tmp_path / "missing.mp4"}"'
     assert clipboard.paths_in_text(text) == [a, b]
+
+
+# --------------------------------------------------------------------------- #
+# cookies
+# --------------------------------------------------------------------------- #
+
+def test_cookies_from_a_browser_and_profile() -> None:
+    from crec.download import cookie_opts
+
+    assert cookie_opts("Firefox") == {"cookiesfrombrowser": ("firefox", None, None, None)}
+    assert cookie_opts("chrome:Profile 1")["cookiesfrombrowser"][:2] == ("chrome", "Profile 1")
+    assert cookie_opts(None) == {}
+
+
+def test_cookies_from_a_file(tmp_path) -> None:
+    from crec.download import cookie_opts
+
+    jar = tmp_path / "cookies.txt"
+    jar.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    assert cookie_opts(str(jar)) == {"cookiefile": str(jar)}
+
+
+def test_missing_cookie_file_is_not_mistaken_for_a_browser() -> None:
+    """Regression: "C:/x/cookies.txt" split on ':' gave browser "c"."""
+    from crec.download import cookie_opts
+
+    with pytest.raises(CrecError, match="no cookies file"):
+        cookie_opts("C:/nowhere/cookies.txt")
+
+
+def test_unknown_browser_lists_the_real_ones() -> None:
+    from crec.download import cookie_opts
+
+    with pytest.raises(CrecError, match="firefox"):
+        cookie_opts("netscape")
+
+
+def test_cookies_is_a_preset_key() -> None:
+    assert validate_preset_values("defaults", {"cookies": "firefox"}) == []
+    assert _resolve(["--cookies", "edge"])[0].cookies == "edge"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # yt-dlp's own login errors end with its cookie hint
+        "ERROR: [Instagram] abc: Requested content is not available, rate-limit reached "
+        "or login required. Use --cookies, --cookies-from-browser, --username and --password",
+        "ERROR: [youtube] xyz: Sign in to confirm you're not a bot. Use --cookies-from-browser",
+        "ERROR: [youtube] xyz: Sign in to confirm your age. This video may be inappropriate",
+        "ERROR: [TikTok] 123: This account is private",
+    ],
+)
+def test_login_errors_are_recognised(message: str) -> None:
+    from crec.download import _looks_stale, _needs_login
+
+    assert _needs_login(message)
+    # Updating yt-dlp never fixes a login wall, so it must not trigger that retry.
+    assert not (_looks_stale(message) and not _needs_login(message))
+
+
+def test_ordinary_breakage_is_not_a_login_problem() -> None:
+    from crec.download import _needs_login
+
+    assert not _needs_login("ERROR: [TikTok] 123: Unable to extract webpage video data")
+
+
+def test_login_help_names_the_site_and_the_fix() -> None:
+    from crec.download import _login_help
+
+    first = _login_help("https://www.tiktok.com/@a/video/1", None)
+    assert "tiktok.com" in first and "--cookies firefox" in first and 'cookies = "firefox"' in first
+
+    again = _login_help("https://www.tiktok.com/@a/video/1", "firefox")
+    assert "even with cookies" in again
+
+
+def test_cookie_read_help_only_blames_locking_when_it_is_locking(monkeypatch) -> None:
+    from crec import download
+
+    monkeypatch.setattr(download.sys, "platform", "win32")
+    locked = download._cookie_read_help("chrome", "Could not copy Chrome cookie database")
+    assert "Close chrome" in locked
+
+    missing = download._cookie_read_help("chrome:Work", "could not find chrome cookies database")
+    assert "Could not find a 'Work' profile in chrome" in missing
+
+
+def test_cookie_failure_is_found_inside_downloaderror() -> None:
+    """yt-dlp reports CookieLoadError, which raises DownloadError, then re-raises."""
+    import yt_dlp
+    from crec.download import _caused_by_cookie_load
+
+    try:
+        try:
+            raise yt_dlp.cookies.CookieLoadError("could not find chrome cookies database")
+        except yt_dlp.cookies.CookieLoadError:
+            raise yt_dlp.utils.DownloadError("ERROR: could not find...") from None
+    except yt_dlp.utils.DownloadError as wrapped:
+        wrapped.__context__ = yt_dlp.cookies.CookieLoadError("x")
+        assert _caused_by_cookie_load(wrapped, yt_dlp)
+
+    assert not _caused_by_cookie_load(yt_dlp.utils.DownloadError("other"), yt_dlp)
+
+
+def test_long_output_folder_is_not_trimmed_into_the_filename(tmp_path) -> None:
+    """Regression: trim_file_name applied to the whole path, so a deep -o folder
+    sent "Me at the zoo.webm" to <a parent folder>/c.webm."""
+    import yt_dlp
+    from crec.download import Progress, build_ydl_opts
+
+    deep = tmp_path.joinpath(*["a-fairly-long-folder-name"] * 6)
+    opts = build_ydl_opts(Options(), deep, Progress(enabled=False))
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        name = ydl.prepare_filename({"id": "x", "title": "Me at the zoo", "ext": "webm"})
+    assert Path(name) == deep / "Me at the zoo.webm"

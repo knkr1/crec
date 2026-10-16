@@ -34,6 +34,7 @@ then run `crec --discord`, and the shrunk version is on your clipboard.
 - [How the size targeting works](#how-the-size-targeting-works)
 - [How trimming works](#how-trimming-works)
 - [Files you already have](#files-you-already-have)
+- [Logins and cookies](#logins-and-cookies)
 - [The clipboard](#the-clipboard)
 - [Keeping yt-dlp current](#keeping-yt-dlp-current)
 - [Commands](#commands)
@@ -138,6 +139,7 @@ The rest, for when you need them:
 | `-t` | save the thumbnail too |
 | `-p` | grab the whole playlist |
 | `--open` | show me the file when it's done |
+| `--cookies firefox` | use your browser logins, for private or login-walled videos (see [Logins and cookies](#logins-and-cookies)) |
 | `--ffmpeg "..."` | pass your own arguments through to ffmpeg |
 | `--last` | use the previous URL or file, ignore whatever's on the clipboard |
 
@@ -372,6 +374,36 @@ clipboard, then whatever the last run worked on.
 Your original is never touched. The result lands in `~/crec` as `clip-crec.mp4` and goes
 on your clipboard like any other download. Running `crec` on a file with no flags is an
 error rather than a pointless copy, since there's nothing to do to it.
+
+---
+
+## Logins and cookies
+
+TikTok, Instagram and X increasingly refuse to hand over videos to anyone not logged in,
+and YouTube does the same for age-restricted videos and its "confirm you're not a bot"
+check. When that happens crec says so, and tells you the fix:
+
+```bash
+crec --cookies firefox            # borrow your Firefox logins for this run
+crec --cookies "chrome:Profile 1" # a specific browser profile
+crec --cookies ~/cookies.txt      # or a Netscape-format cookies file
+```
+
+To make it stick, run `crec presets --edit` and add it to `[defaults]`:
+
+```toml
+[defaults]
+cookies = "firefox"
+```
+
+crec never reads your browser on its own. It only does when you ask, and the cookies go
+to the site you're downloading from and nowhere else.
+
+**Use Firefox on Windows if you can.** Chrome, Edge and other Chromium browsers lock their
+cookie database while they're open, and since Chrome 127 they encrypt cookies so that
+only the browser itself can read them. crec will tell you when that's what went wrong,
+but often the only fix is closing the browser completely, or exporting a cookies.txt with
+a browser extension.
 
 ---
 

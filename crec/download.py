@@ -31,9 +31,28 @@ _STALE_SIGNATURES = (
     "player response",
     "requested format is not available",
     "no video formats found",
-    "confirm your age",
     "unable to find",
 )
+
+# yt-dlp's own login errors all end in a hint naming its cookie flags, which is a
+# steadier signal than chasing each extractor's wording. The rest are the
+# phrasings that come without that hint. Updating yt-dlp never fixes these, so
+# they are checked before the stale signatures.
+_LOGIN_SIGNATURES = (
+    "--cookies",
+    "cookies-from-browser",
+    "login required",
+    "log in to",
+    "sign in to confirm",
+    "confirm your age",
+    "age-restricted",
+    "private video",
+    "this account is private",
+)
+
+# Chromium on Windows locks its cookie database while running and, since
+# Chrome 127, encrypts cookies so only the browser itself can read them.
+_CHROMIUM = {"chrome", "chromium", "edge", "brave", "opera", "vivaldi", "whale"}
 
 
 @dataclass
@@ -86,6 +105,16 @@ class Progress:
             sys.stderr.flush()
 
 
+class _SilentLogger:
+    """``quiet`` does not stop yt-dlp printing ``ERROR:`` lines itself; crec
+    reports every failure in its own words, so swallow them here."""
+
+    def debug(self, _message: str) -> None:
+        pass
+
+    info = warning = error = debug
+
+
 def _format_selector(options: Options) -> str:
     if options.audio_only:
         return "bestaudio/best"
@@ -114,12 +143,17 @@ def _output_template(options: Options) -> str:
 
 def build_ydl_opts(options: Options, output_dir: Path, progress: Progress) -> dict:
     opts: dict = {
-        "outtmpl": {"default": str(output_dir / _output_template(options))},
+        # The folder goes in `paths`, not the template: yt-dlp's trim_file_name
+        # cuts the whole template string, so a long output folder got truncated
+        # into a wrong directory and a one-letter filename.
+        "paths": {"home": str(output_dir)},
+        "outtmpl": {"default": _output_template(options)},
         "format": _format_selector(options),
         "noplaylist": not options.playlist,
         "progress_hooks": [progress.hook],
         "quiet": True,
         "no_warnings": True,
+        "logger": _SilentLogger(),
         "noprogress": True,
         "consoletitle": False,
         # Portable names even when the output lands on a share, a USB stick, or
@@ -135,6 +169,8 @@ def build_ydl_opts(options: Options, output_dir: Path, progress: Progress) -> di
 
     if options.thumbnail:
         opts["writethumbnail"] = True
+
+    opts.update(cookie_opts(options.cookies))
 
     postprocessors: list[dict] = []
     if options.audio_only:
@@ -162,6 +198,98 @@ def build_ydl_opts(options: Options, output_dir: Path, progress: Progress) -> di
         opts["force_keyframes_at_cuts"] = options.exact_cut
 
     return opts
+
+
+def cookie_opts(spec: str | None) -> dict:
+    """yt-dlp options for ``--cookies``: a cookies.txt path, or ``browser[:profile]``."""
+    if not spec:
+        return {}
+    as_file = Path(spec).expanduser()
+    if as_file.is_file():
+        return {"cookiefile": str(as_file)}
+    if any(mark in spec for mark in ("/", "\\")) or spec.lower().endswith(".txt"):
+        # Clearly meant as a file; splitting "C:/..." on ':' would make browser "c".
+        raise CrecError(f"--cookies: no cookies file at {as_file}")
+
+    browser, _, profile = spec.partition(":")
+    browser = browser.strip().lower()
+    supported = _supported_browsers()
+    if browser not in supported:
+        raise CrecError(
+            f"--cookies {spec}: not a file, and '{browser}' is not a browser crec can "
+            f"read. Use one of: {', '.join(sorted(supported))}"
+        )
+    return {"cookiesfrombrowser": (browser, profile.strip() or None, None, None)}
+
+
+def _supported_browsers() -> set[str]:
+    deps.activate_ytdlp()
+    from yt_dlp.cookies import SUPPORTED_BROWSERS  # noqa: PLC0415
+
+    return set(SUPPORTED_BROWSERS)
+
+
+def _needs_login(message: str) -> bool:
+    lowered = message.lower()
+    return any(signature in lowered for signature in _LOGIN_SIGNATURES)
+
+
+def _login_help(url: str, cookies: str | None) -> str:
+    """What to tell someone whose download needs a login."""
+    from urllib.parse import urlparse
+
+    site = urlparse(url).hostname or "this site"
+    site = site.removeprefix("www.").removeprefix("m.")
+    if not cookies:
+        return (
+            f"{site} wants you logged in. If you are logged in in your browser, "
+            f"crec can borrow that:\n"
+            f"  crec --cookies firefox          (or chrome, edge, brave, safari...)\n"
+            f"To make it permanent, run `crec presets --edit` and add under [defaults]:\n"
+            f'  cookies = "firefox"'
+        )
+    return (
+        f"{site} still wants a login, even with cookies from '{cookies}'. Make sure "
+        f"you are logged in to {site} in that browser (and in the right profile - "
+        f"pick one with e.g. --cookies \"chrome:Profile 1\")."
+    )
+
+
+def _caused_by_cookie_load(exc: BaseException, yt_dlp) -> bool:
+    cookie_error = getattr(yt_dlp.cookies, "CookieLoadError", None)
+    if cookie_error is None:
+        return False
+    seen: BaseException | None = exc
+    for _ in range(10):  # context chains are short; never loop forever on a cycle
+        if seen is None:
+            return False
+        if isinstance(seen, cookie_error):
+            return True
+        if isinstance(getattr(seen, "exc_info", None), tuple) and isinstance(
+            seen.exc_info[1], cookie_error
+        ):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
+_LOCKED_SIGNATURES = ("could not copy", "permission", "decrypt", "dpapi", "app-bound", "locked")
+
+
+def _cookie_read_help(cookies: str, detail: str) -> str:
+    browser, _, profile = cookies.partition(":")
+    browser = browser.strip().lower()
+    if "could not find" in detail.lower():
+        where = f"a '{profile.strip()}' profile in {browser}" if profile.strip() else browser
+        return f"Could not find {where}. Is it installed, and have you opened it at least once?"
+    locked = any(s in detail.lower() for s in _LOCKED_SIGNATURES)
+    if sys.platform == "win32" and browser in _CHROMIUM and locked:
+        return (
+            f"Could not read {browser}'s cookies. On Windows, Chrome-based browsers lock "
+            f"their cookies while open and encrypt them so other apps cannot read them. "
+            f"Close {browser} completely and retry, or use Firefox: --cookies firefox"
+        )
+    return f"Could not read cookies from '{cookies}': {detail}"
 
 
 def _static_range(spec: str):
@@ -251,8 +379,16 @@ def fetch(
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
-    except yt_dlp.utils.DownloadError as exc:
+    except yt_dlp.utils.YoutubeDLError as exc:
+        # Raised directly, or - since yt-dlp reports it before re-raising -
+        # wrapped in a DownloadError with the cookie failure as its context.
+        if options.cookies and _caused_by_cookie_load(exc, yt_dlp):
+            raise CrecError(_cookie_read_help(options.cookies, _tidy(str(exc)))) from exc
+        if not isinstance(exc, yt_dlp.utils.DownloadError):
+            raise CrecError(_tidy(str(exc))) from exc
         message = str(exc)
+        if _needs_login(message):
+            raise CrecError(_login_help(url, options.cookies)) from exc
         if allow_update_retry and _looks_stale(message):
             # This is the moment an update is worth its latency: the site just
             # broke, so a stale extractor is the single likeliest cause.
@@ -264,8 +400,6 @@ def fetch(
                 _forget_ytdlp()
                 return fetch(url, options, output_dir, progress, allow_update_retry=False)
         raise ExtractorFailure(_tidy(message)) from exc
-    except yt_dlp.utils.YoutubeDLError as exc:
-        raise CrecError(_tidy(str(exc))) from exc
 
     if info is None:
         raise CrecError("yt-dlp returned nothing for that URL.")
@@ -301,7 +435,7 @@ class Peek:
     height: int | None = None
 
 
-def peek(url: str) -> Peek | None:
+def peek(url: str, *, cookies: str | None = None) -> Peek | None:
     """Metadata-only lookup. Returns None if the site won't say.
 
     Used to size the download *before* making it: targeting 10 MB means there is
@@ -310,8 +444,10 @@ def peek(url: str) -> Peek | None:
     deps.activate_ytdlp()
     import yt_dlp
 
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "logger": _SilentLogger()}
+    opts.update(cookie_opts(cookies))
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception:
         return None
