@@ -40,6 +40,7 @@ PRIMITIVES: tuple[Primitive, ...] = (
     Primitive("playlist", bool, "Download the whole playlist, not just one item"),
     Primitive("output_dir", str, "Where finished files land"),
     Primitive("filename", str, "yt-dlp output template"),
+    Primitive("cookies", str, "Borrow logins from a browser (firefox, chrome:Profile 1) or a cookies.txt"),
     Primitive("copy", bool, "Put the finished file on the clipboard"),
     Primitive("open_folder", bool, "Reveal the file in the file manager when done"),
     Primitive("ffmpeg_args", list, "Extra raw ffmpeg arguments, appended last"),
@@ -67,6 +68,7 @@ class Options:
     playlist: bool = False
     output_dir: str | None = None
     filename: str | None = None
+    cookies: str | None = None
     copy: bool = True
     open_folder: bool = False
     ffmpeg_args: list[str] | None = None

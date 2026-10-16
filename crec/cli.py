@@ -90,6 +90,10 @@ def build_parser(preset_set: presets.PresetSet) -> argparse.ArgumentParser:
     more.add_argument("-t", "--thumbnail", action="store_true", default=None, help="also save the thumbnail")
     more.add_argument("-p", "--playlist", action="store_true", default=None, help="download the whole playlist")
     more.add_argument("--open", action="store_true", default=None, help="reveal the file when done")
+    more.add_argument(
+        "--cookies", metavar="BROWSER",
+        help="use your logins from a browser (firefox, chrome, edge...) or a cookies.txt",
+    )
     more.add_argument("--ffmpeg", metavar="ARGS", help="extra raw ffmpeg arguments")
     more.add_argument("--last", action="store_true", help="reuse the last URL or file, ignoring the clipboard")
     more.add_argument("-v", "--version", action="store_true", help="show version and exit")
@@ -143,6 +147,7 @@ def explicit_options(args: argparse.Namespace) -> dict:
         "thumbnail": args.thumbnail,
         "playlist": args.playlist,
         "output_dir": args.output,
+        "cookies": args.cookies,
         "copy": False if args.no_copy else None,
         "open_folder": args.open,
         "ffmpeg_args": _split_ffmpeg(args.ffmpeg),
@@ -320,7 +325,7 @@ def _plan_download_quality(url: str, options: Options) -> tuple[int | None, str 
 
     Also surfaces an impossible target *before* the download rather than after.
     """
-    peeked = download.peek(url)
+    peeked = download.peek(url, cookies=options.cookies)
     if peeked is None or peeked.duration is None:
         return None, None  # live stream, or the site won't say - don't guess
 
