@@ -96,7 +96,8 @@ class Options:
                 self.crf is not None,
                 self.fps is not None,
                 self.scale is not None,
-                self.exact_cut,
+                # Not exact_cut: the trim itself handles that, and counting it
+                # here only bought a pointless remux of the finished file.
                 (self.format or "") == "gif",
                 bool(self.ffmpeg_args),
             )

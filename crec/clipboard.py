@@ -182,8 +182,13 @@ def _win_read_text() -> str:
 # macOS
 # --------------------------------------------------------------------------- #
 
+def _applescript_string(text: str) -> str:
+    """Quote *text* as an AppleScript literal; a raw `"` in a title breaks the script."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _mac_copy_files(files: list[Path]) -> None:
-    items = ", ".join(f'(POSIX file "{path}")' for path in files)
+    items = ", ".join(f"(POSIX file {_applescript_string(str(path))})" for path in files)
     script = f"set the clipboard to {{{items}}}" if len(files) > 1 else f"set the clipboard to {items}"
     result = subprocess.run(
         ["osascript", "-e", script], capture_output=True, text=True, check=False

@@ -84,7 +84,16 @@ def probe(path: Path) -> Probe:
 
     data = json.loads(result.stdout or "{}")
     streams = data.get("streams", [])
-    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    # Embedded cover art (an mp3's thumbnail) shows up as a one-frame "video"
+    # stream. Counting it would send an audio file through the x264 path.
+    video = next(
+        (
+            s for s in streams
+            if s.get("codec_type") == "video"
+            and not (s.get("disposition") or {}).get("attached_pic")
+        ),
+        None,
+    )
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
     duration = 0.0
@@ -353,6 +362,26 @@ def _run(args: list[str], *, what: str) -> None:
         raise CrecError(f"{what} failed:\n{tail}")
 
 
+# Containers that only accept specific codecs. Anything not listed gets
+# x264/AAC, which mp4, mkv and mov all take.
+_AUDIO_CODECS = {".mp3": "libmp3lame", ".opus": "libopus", ".ogg": "libopus", ".webm": "libopus"}
+_LOSSLESS_AUDIO = {".wav", ".flac"}
+
+
+def audio_codec_for(destination: Path) -> str:
+    return _AUDIO_CODECS.get(destination.suffix.lower(), "aac")
+
+
+def _video_codec_args(destination: Path, crf: int | None) -> list[str]:
+    if destination.suffix.lower() == ".webm":
+        # webm cannot hold h264. VP9's CRF scale differs: ~32 matches x264's 21.
+        return ["-c:v", "libvpx-vp9", "-crf", str(crf if crf is not None else 32), "-b:v", "0"]
+    return [
+        "-c:v", "libx264", "-crf", str(crf if crf is not None else 21), "-preset", "medium",
+        "-movflags", "+faststart",
+    ]
+
+
 def _scale_filter(height: int | None, width: int | None, fps: int | None) -> str | None:
     chain: list[str] = []
     if fps:
@@ -511,12 +540,12 @@ def trim(
         args += ["-i", str(source), "-ss", f"{start:g}"]
         if end is not None:
             args += ["-to", f"{end:g}"]
-        args += ["-c:a", "libmp3lame" if source.suffix == ".mp3" else "aac", "-q:a", "2"]
+        args += ["-c:a", audio_codec_for(destination), "-q:a", "2"]
     elif exact:
         args += ["-i", str(source), "-ss", f"{start:g}"]
         if end is not None:
             args += ["-to", f"{end:g}"]
-        args += ["-c:v", "libx264", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart"]
+        args += _video_codec_args(destination, 20) + ["-c:a", audio_codec_for(destination)]
     else:
         # -ss before -i is the fast seek; stream copy keeps it lossless.
         #
@@ -556,6 +585,95 @@ def to_gif(
     )
 
 
+_MIN_GIF_WIDTH = 160
+_MIN_GIF_FPS = 8
+
+
+def fit_gif(
+    source: Path,
+    destination: Path,
+    target_mb: float,
+    *,
+    fps: int = 15,
+    width: int = 480,
+    on_note: object = None,
+) -> None:
+    """Make a GIF that lands under *target_mb*.
+
+    GIF has no bitrate knob - size follows pixels times frames - so measure,
+    then shrink width (and fps once that gets harsh) by how far it missed.
+    """
+    limit = target_mb * 1_048_576
+    source_width = probe(source).width
+    if source_width:
+        width = min(width, source_width)
+
+    for attempt in range(1, 5):
+        to_gif(source, destination, fps=fps, width=width)
+        actual = destination.stat().st_size
+        if actual <= limit:
+            return
+        if attempt == 4 or (width <= _MIN_GIF_WIDTH and fps <= _MIN_GIF_FPS):
+            raise ImpossibleTarget(
+                f"Got the gif to {actual / 1_048_576:.1f} MB at {width}px/{fps}fps but "
+                f"could not reach {target_mb:g} MB. Trim it shorter with -c."
+            )
+
+        # Size scales with width^2 * fps. Take it out of fps first when the miss
+        # is large, since 10 fps still reads as motion and halves nothing else.
+        ratio = limit / actual
+        if ratio < 0.5 and fps > 10:
+            ratio *= fps / 10
+            fps = 10
+        wanted = int(width * min(ratio, 1.0) ** 0.5 * 0.92)
+        if wanted < _MIN_GIF_WIDTH:
+            # Width is at its floor; the rest has to come out of the frame rate.
+            fps = max(_MIN_GIF_FPS, int(fps * wanted ** 2 / _MIN_GIF_WIDTH ** 2))
+        width = max(_MIN_GIF_WIDTH, wanted)
+        if callable(on_note):
+            on_note(
+                f"gif landed at {actual / 1_048_576:.1f} MB - retrying at {width}px, {fps} fps"
+            )
+
+
+_MIN_AUDIO_KBPS = 32
+
+
+def fit_audio(source: Path, destination: Path, info: Probe, target_mb: float) -> None:
+    """Re-encode audio to land under *target_mb*, verified like :func:`fit_to_size`.
+
+    CBR audio is predictable, but whatever we stream-copy alongside it (cover
+    art) is not, so measure and correct once.
+    """
+    if info.duration <= 0:
+        raise CrecError("Cannot target a file size without knowing the duration.")
+    limit = target_mb * 1_048_576
+    budget = limit - _MOOV_ALLOWANCE
+
+    for attempt in (1, 2):
+        kbps = int(budget * 8 / 1000 / info.duration)
+        if kbps < _MIN_AUDIO_KBPS:
+            affordable = limit * 8 / 1000 / _MIN_AUDIO_KBPS
+            raise ImpossibleTarget(
+                f"{target_mb:g} MB cannot hold {_format_duration(info.duration)} of audio. "
+                f"Trim it with -c (about {_format_duration(affordable)} would fit)."
+            )
+        convert(source, destination, audio_kbps=kbps)
+        actual = destination.stat().st_size
+        if actual <= limit:
+            return
+        if attempt == 2:
+            raise ImpossibleTarget(
+                f"Got it to {actual / 1_048_576:.1f} MB but could not reach {target_mb:g} MB."
+            )
+        budget *= limit / actual * 0.98
+
+
+def lossless_to_lossy(path: Path) -> str:
+    """Suffix to compress *path* into: wav/flac cannot be size-targeted."""
+    return ".mp3" if path.suffix.lower() in _LOSSLESS_AUDIO else path.suffix
+
+
 def convert(
     source: Path,
     destination: Path,
@@ -577,15 +695,14 @@ def convert(
         args += ["-vf", video_filter]
 
     if crf is not None or video_filter:
-        args += ["-c:v", "libx264", "-crf", str(crf if crf is not None else 21), "-preset", "medium"]
-        args += ["-movflags", "+faststart"]
+        args += _video_codec_args(destination, crf)
     else:
         args += ["-c", "copy"]
 
     if drop_audio:
         args += ["-an"]
     elif audio_kbps:
-        args += ["-c:a", "aac", "-b:a", f"{audio_kbps}k"]
+        args += ["-c:a", audio_codec_for(destination), "-b:a", f"{audio_kbps}k"]
 
     args += list(extra_args or [])
     args.append(str(destination))
