@@ -31,9 +31,21 @@ def _save(data: dict[str, Any]) -> None:
         pass  # a lost memory is never worth failing a download over
 
 
-def remember(url: str, outputs: list[Path] | None = None) -> None:
+def remember(
+    url: str | None,
+    outputs: list[Path] | None = None,
+    *,
+    inputs: list[Path] | None = None,
+) -> None:
+    """Record what the last run worked on: a URL, or local *inputs*."""
     data = _load()
-    data["last_url"] = url
+    # Exactly one kind of source is "the last one", so `crec --last` is unambiguous.
+    if url:
+        data["last_url"] = url
+        data.pop("last_inputs", None)
+    elif inputs:
+        data["last_inputs"] = [str(path) for path in inputs]
+        data.pop("last_url", None)
     data["last_at"] = time.time()
     if outputs:
         data["last_files"] = [str(path) for path in outputs]
@@ -42,6 +54,11 @@ def remember(url: str, outputs: list[Path] | None = None) -> None:
 
 def last_url() -> str | None:
     return _load().get("last_url")
+
+
+def last_inputs() -> list[Path]:
+    """Local files the last run started from, if they still exist."""
+    return [Path(p) for p in _load().get("last_inputs", []) if Path(p).is_file()]
 
 
 def last_files() -> list[Path]:

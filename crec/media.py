@@ -364,7 +364,10 @@ def _run(args: list[str], *, what: str) -> None:
 
 # Containers that only accept specific codecs. Anything not listed gets
 # x264/AAC, which mp4, mkv and mov all take.
-_AUDIO_CODECS = {".mp3": "libmp3lame", ".opus": "libopus", ".ogg": "libopus", ".webm": "libopus"}
+_AUDIO_CODECS = {
+    ".mp3": "libmp3lame", ".opus": "libopus", ".ogg": "libopus", ".webm": "libopus",
+    ".wav": "pcm_s16le", ".flac": "flac",
+}
 _LOSSLESS_AUDIO = {".wav", ".flac"}
 
 
@@ -683,18 +686,33 @@ def convert(
     height: int | None = None,
     fps: int | None = None,
     drop_audio: bool = False,
+    drop_video: bool = False,
     audio_kbps: int | None = None,
     extra_args: list[str] | None = None,
 ) -> None:
-    """Quality-based (CRF) re-encode, or a remux when nothing needs re-encoding."""
+    """Quality-based (CRF) re-encode, or a remux when nothing needs re-encoding.
+
+    ``drop_video`` extracts the audio, re-encoding it to suit *destination*.
+    """
     ffmpeg = deps.ffmpeg_path()
     args = [str(ffmpeg), "-y", "-hide_banner", "-loglevel", "error", "-i", str(source)]
+
+    if drop_video:
+        codec = audio_codec_for(destination)
+        args += ["-vn", "-c:a", codec]
+        if destination.suffix.lower() not in _LOSSLESS_AUDIO:
+            args += ["-b:a", f"{audio_kbps or 192}k"]
+        args += list(extra_args or [])
+        args.append(str(destination))
+        _run(args, what="ffmpeg (extract audio)")
+        return
 
     video_filter = _scale_filter(height, width, fps)
     if video_filter:
         args += ["-vf", video_filter]
 
-    if crf is not None or video_filter:
+    reencoding_video = crf is not None or video_filter
+    if reencoding_video:
         args += _video_codec_args(destination, crf)
     else:
         args += ["-c", "copy"]
@@ -703,6 +721,11 @@ def convert(
         args += ["-an"]
     elif audio_kbps:
         args += ["-c:a", audio_codec_for(destination), "-b:a", f"{audio_kbps}k"]
+    elif reencoding_video:
+        # Left alone, ffmpeg re-encodes audio to the container's default (vorbis
+        # for mkv) for no reason. Copy it - except into webm, which only takes opus.
+        is_webm = destination.suffix.lower() == ".webm"
+        args += ["-c:a", "libopus" if is_webm else "copy"]
 
     args += list(extra_args or [])
     args.append(str(destination))
